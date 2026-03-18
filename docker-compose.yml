@@ -1,0 +1,41 @@
+version: '3.9'
+
+# ClouDNext AI — adicione este serviço ao docker-compose do Evolution
+# OU rode standalone com: docker-compose up -d
+
+services:
+  cloudnext-ai:
+    build: .
+    container_name: cloudnext-ai
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      APP_URL: ${APP_URL:-http://191.252.214.136:3002}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution-api:8080}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-evolution-internal-key-2024}
+      INSTANCE_NAME: ${INSTANCE_NAME:-cloudnext-ai}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY}
+    volumes:
+      - cloudnext_ai_data:/app/data
+    networks:
+      - evolution-net
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cloudnext-ai.rule=Host(`ai.energiademais.com.br`)"
+      - "traefik.http.routers.cloudnext-ai.entrypoints=websecure"
+      - "traefik.http.routers.cloudnext-ai.tls=true"
+      - "traefik.http.routers.cloudnext-ai.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cloudnext-ai.loadbalancer.server.port=3002"
+
+volumes:
+  cloudnext_ai_data:
+
+networks:
+  evolution-net:
+    external: true
+  dokploy-network:
+    external: true
