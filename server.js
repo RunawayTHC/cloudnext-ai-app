@@ -428,6 +428,30 @@ app.post('/api/simulate', async (req, res) => {
   res.json({ ok: true, message: 'Processando... veja os logs.' });
 });
 
+// POST /api/chat-test — interactive AI test in dashboard (returns response directly, no WhatsApp)
+app.post('/api/chat-test', async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: 'message obrigatório' });
+
+  try {
+    const { persona, geminiModel, voiceId, audioRoutingEnabled } = state.config;
+    if (!GEMINI_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY não configurada' });
+
+    const rawResponse = await callGemini(message, persona, geminiModel);
+    const isAudio = audioRoutingEnabled && rawResponse.startsWith('[AUDIO]') && ELEVENLABS_KEY && voiceId;
+    const cleanText = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
+
+    if (isAudio) {
+      const audioBase64 = await callElevenLabs(cleanText, voiceId);
+      return res.json({ ok: true, format: 'audio', text: cleanText, audioBase64, mimeType: 'audio/mpeg' });
+    }
+
+    res.json({ ok: true, format: 'text', text: cleanText });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ============================================================
 // STARTUP
 // ============================================================
