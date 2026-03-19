@@ -31,23 +31,35 @@ const APP_URL        = process.env.APP_URL || `http://localhost:${PORT}`;
 // ============================================================
 // IN-MEMORY STATE (persisted to data.json)
 // ============================================================
-const DATA_FILE = path.join(__dirname, 'data.json');
+// Use /app/data/ if it exists (Railway persistent volume), otherwise local
+const DATA_DIR = existsSync('/app/data') ? '/app/data' : __dirname;
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
+
+const DEFAULT_VOICE_ID = process.env.VOICE_ID || '';
+
+function defaultConfig() {
+  return {
+    persona: 'Você é um assistente de vendas profissional e cordial. Responda sempre em português.',
+    geminiModel: 'gemini-2.0-flash',
+    voiceId: DEFAULT_VOICE_ID,
+    delayMin: 1500,
+    delayMax: 4000,
+    audioRoutingEnabled: !!DEFAULT_VOICE_ID,
+    ignoredNumbers: [],
+  };
+}
 
 function loadData() {
-  if (!existsSync(DATA_FILE)) return {
-    config: {
-      persona: 'Você é um assistente de vendas profissional e cordial. Responda sempre em português.',
-      geminiModel: 'gemini-2.0-flash',
-      voiceId: '',
-      delayMin: 1500,
-      delayMax: 4000,
-      audioRoutingEnabled: false,
-      ignoredNumbers: [],
-    },
-    logs: [],
-    stats: { totalSent: 0, audioSent: 0, textSent: 0, errors: 0, startTime: Date.now() }
-  };
-  try { return JSON.parse(readFileSync(DATA_FILE, 'utf8')); } catch { return loadData(); }
+  let data;
+  if (!existsSync(DATA_FILE)) {
+    data = { config: defaultConfig(), logs: [], stats: { totalSent: 0, audioSent: 0, textSent: 0, errors: 0, startTime: Date.now() } };
+  } else {
+    try { data = JSON.parse(readFileSync(DATA_FILE, 'utf8')); } catch { data = { config: defaultConfig(), logs: [], stats: { totalSent: 0, audioSent: 0, textSent: 0, errors: 0, startTime: Date.now() } }; }
+  }
+  // Always merge env vars as fallback if fields are empty
+  if (!data.config.voiceId && DEFAULT_VOICE_ID) data.config.voiceId = DEFAULT_VOICE_ID;
+  if (!data.config.audioRoutingEnabled && DEFAULT_VOICE_ID) data.config.audioRoutingEnabled = true;
+  return data;
 }
 
 function saveData() {
