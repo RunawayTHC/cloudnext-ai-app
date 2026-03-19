@@ -324,6 +324,12 @@
         </div>
       </div>
       <div class="scroll-area" style="background:#f0f2f5;">
+        <div class="card" style="margin-bottom:14px;">
+          <div class="toggle-row">
+            <div class="toggle-info"><h4>IA Ativa</h4><p>Ativa ou desativa as respostas automáticas da IA</p></div>
+            <label class="toggle"><input type="checkbox" id="cfg-ai-enabled" checked onchange="fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aiEnabled:this.checked})}).then(()=>toast(this.checked?'✅ IA ativada':'⏸ IA desativada'))"><span class="slider"></span></label>
+          </div>
+        </div>
         <div class="stats-row">
           <div class="stat"><div class="stat-label">Total Enviados</div><div class="stat-value c-green" id="st-total">0</div><div class="stat-sub">respondidas</div></div>
           <div class="stat"><div class="stat-label">Texto</div><div class="stat-value c-blue" id="st-text">0</div><div class="stat-sub">em texto</div></div>
@@ -454,7 +460,7 @@
             <div class="card">
               <div class="card-label">Voz — ElevenLabs TTS</div>
               <div class="toggle-row">
-                <div class="toggle-info"><h4>Respostas em Áudio</h4><p>IA escolhe [AUDIO] ou [TEXTO]</p></div>
+                <div class="toggle-info"><h4>Respostas em Áudio</h4><p>Habilita síntese de voz via ElevenLabs</p></div>
                 <label class="toggle"><input type="checkbox" id="cfg-audio"><span class="slider"></span></label>
               </div>
               <div class="fg" style="margin-top:12px;">
@@ -462,6 +468,35 @@
                 <input type="text" id="cfg-voice" placeholder="gKsrz2JqqOZjByspi6Wb">
                 <div class="hint">elevenlabs.io → Voices → ID</div>
               </div>
+              <div class="fg">
+                <label>Modo de Áudio</label>
+                <select id="cfg-audio-mode" onchange="toggleScheduleFields()">
+                  <option value="ai">IA Decide [AUDIO]/[TEXTO]</option>
+                  <option value="always">Sempre Áudio</option>
+                  <option value="never">Sempre Texto</option>
+                  <option value="schedule">Por Horário (Brasília)</option>
+                </select>
+              </div>
+              <div id="schedule-fields" style="display:none;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div class="fg">
+                    <label>Início do Horário</label>
+                    <input type="time" id="cfg-schedule-start" value="08:00">
+                  </div>
+                  <div class="fg">
+                    <label>Fim do Horário</label>
+                    <input type="time" id="cfg-schedule-end" value="18:00">
+                  </div>
+                </div>
+              </div>
+              <div class="fg">
+                <label>Limite de Áudios/Dia (0=ilimitado)</label>
+                <input type="number" id="cfg-audio-limit" value="0" min="0" placeholder="0">
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-label">Créditos ElevenLabs</div>
+              <div id="elevenlabs-credits-content" style="font-size:13px;color:var(--wa-muted);">Carregando...</div>
             </div>
             <div class="card" style="background:linear-gradient(135deg,#005c4b,#00a884);color:white;">
               <div style="font-size:13px;opacity:.9;margin-bottom:12px;font-weight:600;">💡 Treinar por conversa</div>
@@ -637,7 +672,7 @@ document.querySelectorAll('.s-item').forEach(el => {
     el.classList.add('active');
     document.getElementById('page-'+el.dataset.page).classList.add('active');
     if(el.dataset.page==='logs') loadLogs();
-    if(el.dataset.page==='training') loadConfig();
+    if(el.dataset.page==='training'){ loadConfig(); loadElevenLabsCredits(); }
   });
 });
 
@@ -707,6 +742,12 @@ async function loadConfig(){
   document.getElementById('cfg-audio').checked=!!_cfg.audioRoutingEnabled;
   document.getElementById('cfg-voice').value=_cfg.voiceId||'';
   document.getElementById('cfg-ignored').value=(_cfg.ignoredNumbers||[]).join('\n');
+  if(_cfg.aiEnabled!==undefined) document.getElementById('cfg-ai-enabled').checked=!!_cfg.aiEnabled;
+  if(_cfg.audioDailyLimit!==undefined) document.getElementById('cfg-audio-limit').value=_cfg.audioDailyLimit;
+  if(_cfg.audioMode) document.getElementById('cfg-audio-mode').value=_cfg.audioMode;
+  if(_cfg.audioScheduleStart) document.getElementById('cfg-schedule-start').value=_cfg.audioScheduleStart;
+  if(_cfg.audioScheduleEnd) document.getElementById('cfg-schedule-end').value=_cfg.audioScheduleEnd;
+  toggleScheduleFields();
 }
 async function saveConfig(){
   const body={
@@ -716,12 +757,42 @@ async function saveConfig(){
     delayMax:+document.getElementById('cfg-dmax').value||4000,
     audioRoutingEnabled:document.getElementById('cfg-audio').checked,
     voiceId:document.getElementById('cfg-voice').value.trim(),
-    ignoredNumbers:document.getElementById('cfg-ignored').value.split('\n').map(s=>s.trim()).filter(Boolean)
+    ignoredNumbers:document.getElementById('cfg-ignored').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    audioDailyLimit:+document.getElementById('cfg-audio-limit').value||0,
+    audioMode:document.getElementById('cfg-audio-mode').value,
+    audioScheduleStart:document.getElementById('cfg-schedule-start').value,
+    audioScheduleEnd:document.getElementById('cfg-schedule-end').value,
   };
   const d=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   toast(d.ok?'✅ Salvo!':'❌ Erro ao salvar',!d.ok);
 }
 function closePersonaBanner(){document.getElementById('persona-banner').style.display='none';}
+
+function toggleScheduleFields(){
+  const mode=document.getElementById('cfg-audio-mode')?.value;
+  const sf=document.getElementById('schedule-fields');
+  if(sf) sf.style.display=(mode==='schedule')?'block':'none';
+}
+
+async function loadElevenLabsCredits(){
+  const el=document.getElementById('elevenlabs-credits-content');
+  if(!el) return;
+  try{
+    const d=await fetch('/api/elevenlabs/credits').then(r=>r.json());
+    if(!d.ok){el.innerHTML=`<span style="color:var(--red);">Erro: ${esc(d.error)}</span>`;return;}
+    const used=d.characterCount||0;
+    const total=d.characterLimit||1;
+    const pct=Math.min(100,Math.round(used/total*100));
+    const color=pct>85?'var(--red)':pct>60?'var(--yellow)':'var(--wa-green)';
+    el.innerHTML=`
+      <div style="margin-bottom:6px;"><strong>${used.toLocaleString('pt-BR')}</strong> / ${total.toLocaleString('pt-BR')} caracteres usados <span style="color:var(--wa-muted);font-size:12px;">(${pct}%)</span></div>
+      <div style="background:#f0f2f5;border-radius:6px;height:8px;overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:${color};border-radius:6px;transition:width .4s;"></div>
+      </div>
+      ${d.tier?`<div style="margin-top:6px;font-size:11px;color:var(--wa-muted);text-transform:uppercase;letter-spacing:.5px;">Plano: ${esc(d.tier)}</div>`:''}
+    `;
+  }catch(e){el.innerHTML=`<span style="color:var(--red);">Erro ao carregar créditos</span>`;}
+}
 
 // ── LOGS ──
 let logFilter='all';
@@ -827,9 +898,23 @@ async function sendChat(){
 // ── AI TRAINER MODAL ──
 let aiMsgs=[], pendingPersona=null;
 
-function openAIChat(){
+async function openAIChat(){
   document.getElementById('ai-modal').classList.add('open');
-  if(aiMsgs.length===0) setTimeout(startTraining,500);
+  if(aiMsgs.length===0){
+    try{
+      const d=await fetch('/api/training-history').then(r=>r.json());
+      if(d.ok&&d.history&&d.history.length>0){
+        aiMsgs=d.history;
+        const msgsEl=document.getElementById('ai-msgs');
+        msgsEl.innerHTML='<div class="date-sep"><span>Histórico restaurado</span></div>';
+        d.history.forEach(m=>addMsg('ai-msgs',m.role,m.text));
+      } else {
+        setTimeout(startTraining,500);
+      }
+    }catch{
+      setTimeout(startTraining,500);
+    }
+  }
 }
 function closeAIModal(){document.getElementById('ai-modal').classList.remove('open');}
 function resetAIChat(){aiMsgs=[];pendingPersona=null;document.getElementById('ai-msgs').innerHTML='<div class="date-sep"><span>Nova sessão</span></div>';document.getElementById('ai-save-bar').style.display='none';setTimeout(startTraining,200);}

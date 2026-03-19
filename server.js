@@ -66,10 +66,17 @@ const state = {
     delayMax: 4000,
     audioRoutingEnabled: !!DEFAULT_VOICE,
     ignoredNumbers: [],
+    aiEnabled: true,
+    audioDailyLimit: 0,
+    audioMode: 'ai',
+    audioScheduleStart: '08:00',
+    audioScheduleEnd: '18:00',
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
-  _connectionState: 'unknown'
+  _connectionState: 'unknown',
+  _audioTodayDate: null,
+  _audioTodayCount: 0,
 };
 
 async function loadConfig() {
@@ -86,6 +93,11 @@ async function loadConfig() {
   if (map.audioRoutingEnabled !== undefined) state.config.audioRoutingEnabled = map.audioRoutingEnabled === 'true';
   else if (DEFAULT_VOICE)       state.config.audioRoutingEnabled  = true;
   if (map.ignoredNumbers)       state.config.ignoredNumbers       = JSON.parse(map.ignoredNumbers);
+  if (map.aiEnabled !== undefined) state.config.aiEnabled = map.aiEnabled === 'true';
+  if (map.audioDailyLimit !== undefined) state.config.audioDailyLimit = parseInt(map.audioDailyLimit) || 0;
+  if (map.audioMode)            state.config.audioMode            = map.audioMode;
+  if (map.audioScheduleStart)   state.config.audioScheduleStart   = map.audioScheduleStart;
+  if (map.audioScheduleEnd)     state.config.audioScheduleEnd     = map.audioScheduleEnd;
 }
 
 async function saveConfig() {
@@ -98,6 +110,11 @@ async function saveConfig() {
     ['delayMax',             String(cfg.delayMax)],
     ['audioRoutingEnabled',  String(cfg.audioRoutingEnabled)],
     ['ignoredNumbers',       JSON.stringify(cfg.ignoredNumbers)],
+    ['aiEnabled',            String(cfg.aiEnabled)],
+    ['audioDailyLimit',      String(cfg.audioDailyLimit || 0)],
+    ['audioMode',            cfg.audioMode],
+    ['audioScheduleStart',   cfg.audioScheduleStart],
+    ['audioScheduleEnd',     cfg.audioScheduleEnd],
   ];
   for (const [key, value] of entries) {
     await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
@@ -180,18 +197,52 @@ async function sendAudio(phone, audioBase64, mimetype = 'audio/mpeg') {
   });
 }
 
+// ── HELPERS ──
+function getBrazilDate() {
+  return new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+}
+
+function getBrazilTimeStr() {
+  return new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function brazilNow() {
+  return new Date().toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo', weekday: 'long',
+    year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
+function shouldSendAudio(rawResponse) {
+  const { audioMode, audioRoutingEnabled, voiceId, audioDailyLimit } = state.config;
+  if (!audioRoutingEnabled || !ELEVENLABS_KEY || !voiceId) return false;
+  const today = getBrazilDate();
+  if (state._audioTodayDate !== today) { state._audioTodayDate = today; state._audioTodayCount = 0; }
+  if (audioDailyLimit > 0 && state._audioTodayCount >= audioDailyLimit) return false;
+  if (audioMode === 'never') return false;
+  if (audioMode === 'always') return true;
+  if (audioMode === 'schedule') {
+    const t = getBrazilTimeStr();
+    return t >= state.config.audioScheduleStart && t <= state.config.audioScheduleEnd;
+  }
+  return rawResponse.startsWith('[AUDIO]');
+}
+
 // ── GEMINI ──
 async function callGemini(userMessage, persona, model = 'gemini-2.0-flash') {
   const audioInstruction = state.config.audioRoutingEnabled && ELEVENLABS_KEY && state.config.voiceId
     ? `\n\nINSTRUÇÃO DE FORMATO: Inicie SEMPRE cada resposta com [AUDIO] ou [TEXTO].\n- Use [AUDIO] para: saudações, warmup, follow-up pessoal, mensagens curtas.\n- Use [TEXTO] para: preços, links, dados técnicos, listas.\nNUNCA omita esse prefixo.`
     : '';
 
+  const timeCtx = `\n\n[HORA ATUAL EM BRASÍLIA: ${brazilNow()}]`;
+
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
     {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: persona + audioInstruction }] },
+        system_instruction: { parts: [{ text: persona + timeCtx + audioInstruction }] },
         contents: [{ role: 'user', parts: [{ text: userMessage }] }]
       })
     }
@@ -217,11 +268,12 @@ const processingQueue = new Set();
 
 async function processMessage(phone, messageText) {
   if (processingQueue.has(phone)) return;
+  if (!state.config.aiEnabled) return;
   processingQueue.add(phone);
   await addLog('message', 'in', phone, messageText);
 
   try {
-    const { persona, geminiModel, voiceId, delayMin, delayMax, audioRoutingEnabled } = state.config;
+    const { persona, geminiModel, voiceId, delayMin, delayMax } = state.config;
     if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY não configurada');
 
     const delay = Math.floor(Math.random() * (delayMax - delayMin)) + delayMin;
@@ -230,13 +282,14 @@ async function processMessage(phone, messageText) {
     const rawResponse = await callGemini(messageText, persona, geminiModel);
     await addLog('ai', 'system', phone, `Gemini: ${rawResponse.slice(0, 120)}`);
 
-    const isAudio = audioRoutingEnabled && rawResponse.startsWith('[AUDIO]') && ELEVENLABS_KEY && voiceId;
+    const isAudio = shouldSendAudio(rawResponse);
     const cleanResponse = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
 
     if (isAudio) {
       const audioBase64 = await callElevenLabs(cleanResponse, voiceId);
       const r = await sendAudio(phone, audioBase64);
       if (r.ok) {
+        state._audioTodayCount++;
         await incStat('audioSent'); await incStat('totalSent');
         await addLog('message', 'out', phone, `[ÁUDIO] ${cleanResponse.slice(0, 80)}`, { format: 'audio' });
       } else throw new Error(`sendAudio failed: ${JSON.stringify(r.data)}`);
@@ -338,7 +391,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
@@ -423,6 +476,11 @@ Nunca omita essas tags.`;
       state.config.persona = persona;
       await saveConfig();
     }
+    const fullHistory = [...messages, { role: 'ai', text }];
+    await pool.query(
+      'INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2',
+      ['trainingHistory', JSON.stringify(fullHistory)]
+    );
     res.json({ ok: true, text, persona });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -446,6 +504,27 @@ app.post('/api/chat-test', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+app.get('/api/training-history', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT value FROM app_config WHERE key=$1', ['trainingHistory']);
+    if (!rows.length) return res.json({ ok: true, history: [] });
+    res.json({ ok: true, history: JSON.parse(rows[0].value) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/elevenlabs/credits', async (req, res) => {
+  if (!ELEVENLABS_KEY) return res.json({ ok: false, error: 'Sem chave API' });
+  try {
+    const r = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
+      headers: { 'xi-api-key': ELEVENLABS_KEY }
+    });
+    const data = await r.json();
+    res.json({ ok: true, characterCount: data.character_count, characterLimit: data.character_limit, tier: data.tier });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
 // ── STARTUP ──
