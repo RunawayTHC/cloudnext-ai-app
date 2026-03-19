@@ -428,6 +428,57 @@ app.post('/api/simulate', async (req, res) => {
   res.json({ ok: true, message: 'Processando... veja os logs.' });
 });
 
+// POST /api/training-chat — conversa com IA treinadora para gerar persona
+app.post('/api/training-chat', async (req, res) => {
+  const { messages } = req.body;
+  if (!messages?.length) return res.status(400).json({ error: 'messages obrigatório' });
+
+  const trainerPrompt = `Você é um assistente de configuração de agentes de IA para WhatsApp. Sua função é ajudar o usuário a configurar o agente de vendas através de uma conversa natural em português.
+
+Faça perguntas uma por vez para entender:
+1. Nome da empresa e do responsável
+2. Produto ou serviço vendido (descrição, diferenciais)
+3. Preço e condições de pagamento
+4. Público-alvo ideal
+5. Tom de comunicação (formal, informal, descontraído)
+6. Como tratar objeções de preço
+7. O que fazer quando cliente demonstra interesse (agendar reunião? enviar link?)
+8. Informações importantes que a IA precisa saber
+
+Seja amigável e objetivo. Após coletar todas as informações necessárias, o usuário pode pedir para "gerar o prompt" ou "salvar" — então responda com o prompt completo entre as tags <PERSONA> e </PERSONA>, sem mais nenhum texto fora dessas tags.`;
+
+  try {
+    const contents = messages.map(m => ({
+      role: m.role === 'ai' ? 'model' : 'user',
+      parts: [{ text: m.text }]
+    }));
+
+    const res2 = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: trainerPrompt }] },
+          contents
+        })
+      }
+    );
+    const data = await res2.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    // Check if persona was generated
+    const personaMatch = text.match(/<PERSONA>([\s\S]*?)<\/PERSONA>/);
+    if (personaMatch) {
+      return res.json({ ok: true, text: text.replace(/<PERSONA>[\s\S]*?<\/PERSONA>/, '✅ Prompt gerado! Clique em "Salvar como Persona" para aplicar.'), persona: personaMatch[1].trim() });
+    }
+
+    res.json({ ok: true, text });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // POST /api/chat-test — interactive AI test in dashboard (returns response directly, no WhatsApp)
 app.post('/api/chat-test', async (req, res) => {
   const { message } = req.body;
