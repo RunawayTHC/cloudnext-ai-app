@@ -156,6 +156,13 @@ async function createEvolutionInstance() {
   });
 }
 
+async function updateWebhook() {
+  return evoRequest('POST', `/webhook/set/${INSTANCE_NAME}`, {
+    url: `${APP_URL}/webhook`, byEvents: false, base64: true,
+    events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']
+  });
+}
+
 async function sendText(phone, text) {
   return evoRequest('POST', `/message/sendText/${INSTANCE_NAME}`, { number: phone, text });
 }
@@ -302,7 +309,11 @@ app.get('/api/qr', async (req, res) => {
 
 app.post('/api/instance/create', async (req, res) => {
   const existing = await getInstanceStatus();
-  if (existing) return res.json({ ok: true, message: 'Instância já existe', instance: existing });
+  if (existing) {
+    await updateWebhook();
+    await addLog('info', 'system', null, `Webhook atualizado para: ${APP_URL}/webhook`);
+    return res.json({ ok: true, message: 'Webhook atualizado', instance: existing });
+  }
   const r = await createEvolutionInstance();
   await addLog('info', 'system', null, `Instância criada: ${JSON.stringify(r.data).slice(0, 100)}`);
   res.json({ ok: r.ok, data: r.data });
