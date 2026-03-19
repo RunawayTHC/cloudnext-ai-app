@@ -1,103 +1,135 @@
-// ClouDNext AI Server v1.0
-// Webhook receiver + Gemini AI + ElevenLabs TTS + Evolution API sender
-
+// ClouDNext AI Server v2.0 — PostgreSQL storage
 import express from 'express';
 import fetch from 'node-fetch';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { config } from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
-import QRCode from 'qrcode';
+import pg from 'pg';
 
 config();
 
+const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ============================================================
-// CONFIG
-// ============================================================
-const PORT           = process.env.PORT || 3002;
-const EVOLUTION_URL  = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
-const EVOLUTION_KEY  = process.env.EVOLUTION_API_KEY || 'evolution-internal-key-2024';
-const GEMINI_KEY     = process.env.GEMINI_API_KEY || '';
-const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY || '';
-const INSTANCE_NAME  = process.env.INSTANCE_NAME || 'cloudnext-ai';
-const APP_URL        = process.env.APP_URL || `http://localhost:${PORT}`;
+// ── ENV ──
+const PORT          = process.env.PORT || 3002;
+const EVOLUTION_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY || 'evolution-internal-key-2024';
+const GEMINI_KEY    = process.env.GEMINI_API_KEY || '';
+const ELEVENLABS_KEY= process.env.ELEVENLABS_API_KEY || '';
+const INSTANCE_NAME = process.env.INSTANCE_NAME || 'cloudnext-ai';
+const APP_URL       = process.env.APP_URL || `http://localhost:${PORT}`;
+const DEFAULT_VOICE = process.env.VOICE_ID || '';
 
-// ============================================================
-// IN-MEMORY STATE (persisted to data.json)
-// ============================================================
-// Use /app/data/ if it exists (Railway persistent volume), otherwise local
-const DATA_DIR = existsSync('/app/data') ? '/app/data' : __dirname;
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
+// ── POSTGRES ──
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('railway.internal') ? false : { rejectUnauthorized: false }
+});
 
-const DEFAULT_VOICE_ID = process.env.VOICE_ID || '';
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS app_logs (
+      id TEXT PRIMARY KEY,
+      ts BIGINT NOT NULL,
+      type TEXT,
+      direction TEXT,
+      phone TEXT,
+      content TEXT,
+      extra JSONB DEFAULT '{}'
+    );
+    CREATE TABLE IF NOT EXISTS app_stats (
+      key TEXT PRIMARY KEY,
+      value BIGINT DEFAULT 0
+    );
+    INSERT INTO app_stats (key, value) VALUES
+      ('totalSent',0),('textSent',0),('audioSent',0),('errors',0),('startTime', EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
+    ON CONFLICT (key) DO NOTHING;
+  `);
+}
 
-function defaultConfig() {
-  return {
+// ── IN-MEMORY STATE (fast reads, DB-backed writes) ──
+const state = {
+  config: {
     persona: 'Você é um assistente de vendas profissional e cordial. Responda sempre em português.',
     geminiModel: 'gemini-2.0-flash',
-    voiceId: DEFAULT_VOICE_ID,
+    voiceId: DEFAULT_VOICE,
     delayMin: 1500,
     delayMax: 4000,
-    audioRoutingEnabled: !!DEFAULT_VOICE_ID,
+    audioRoutingEnabled: !!DEFAULT_VOICE,
     ignoredNumbers: [],
-  };
+  },
+  stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
+  _qrBase64: null,
+  _connectionState: 'unknown'
+};
+
+async function loadConfig() {
+  const { rows } = await pool.query('SELECT key, value FROM app_config');
+  const map = {};
+  rows.forEach(r => { map[r.key] = r.value; });
+
+  if (map.persona)              state.config.persona              = map.persona;
+  if (map.geminiModel)          state.config.geminiModel          = map.geminiModel;
+  if (map.voiceId)              state.config.voiceId              = map.voiceId;
+  else if (DEFAULT_VOICE)       state.config.voiceId              = DEFAULT_VOICE;
+  if (map.delayMin)             state.config.delayMin             = parseInt(map.delayMin);
+  if (map.delayMax)             state.config.delayMax             = parseInt(map.delayMax);
+  if (map.audioRoutingEnabled !== undefined) state.config.audioRoutingEnabled = map.audioRoutingEnabled === 'true';
+  else if (DEFAULT_VOICE)       state.config.audioRoutingEnabled  = true;
+  if (map.ignoredNumbers)       state.config.ignoredNumbers       = JSON.parse(map.ignoredNumbers);
 }
 
-function loadData() {
-  let data;
-  if (!existsSync(DATA_FILE)) {
-    data = { config: defaultConfig(), logs: [], stats: { totalSent: 0, audioSent: 0, textSent: 0, errors: 0, startTime: Date.now() } };
-  } else {
-    try { data = JSON.parse(readFileSync(DATA_FILE, 'utf8')); } catch { data = { config: defaultConfig(), logs: [], stats: { totalSent: 0, audioSent: 0, textSent: 0, errors: 0, startTime: Date.now() } }; }
+async function saveConfig() {
+  const cfg = state.config;
+  const entries = [
+    ['persona',              cfg.persona],
+    ['geminiModel',          cfg.geminiModel],
+    ['voiceId',              cfg.voiceId],
+    ['delayMin',             String(cfg.delayMin)],
+    ['delayMax',             String(cfg.delayMax)],
+    ['audioRoutingEnabled',  String(cfg.audioRoutingEnabled)],
+    ['ignoredNumbers',       JSON.stringify(cfg.ignoredNumbers)],
+  ];
+  for (const [key, value] of entries) {
+    await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
   }
-  // Always merge env vars as fallback if fields are empty
-  if (!data.config.voiceId && DEFAULT_VOICE_ID) data.config.voiceId = DEFAULT_VOICE_ID;
-  if (!data.config.audioRoutingEnabled && DEFAULT_VOICE_ID) data.config.audioRoutingEnabled = true;
-  return data;
 }
 
-function saveData() {
-  try { writeFileSync(DATA_FILE, JSON.stringify(state, null, 2)); } catch {}
+async function loadStats() {
+  const { rows } = await pool.query('SELECT key, value FROM app_stats');
+  rows.forEach(r => { state.stats[r.key] = Number(r.value); });
 }
 
-let state = loadData();
-
-// Trim logs to last 500
-function addLog(type, direction, phone, content, extra = {}) {
-  const entry = {
-    id: uuidv4(),
-    ts: Date.now(),
-    type,       // 'message' | 'error' | 'info' | 'ai'
-    direction,  // 'in' | 'out' | 'system'
-    phone,
-    content,
-    ...extra
-  };
-  state.logs.unshift(entry);
-  if (state.logs.length > 500) state.logs = state.logs.slice(0, 500);
-  saveData();
-  return entry;
+async function incStat(key) {
+  state.stats[key] = (state.stats[key] || 0) + 1;
+  await pool.query('UPDATE app_stats SET value = value + 1 WHERE key = $1', [key]);
 }
 
-// ============================================================
-// EVOLUTION API HELPERS
-// ============================================================
-const evoHeaders = () => ({
-  'Content-Type': 'application/json',
-  'apikey': EVOLUTION_KEY
-});
+async function addLog(type, direction, phone, content, extra = {}) {
+  const id = uuidv4();
+  const ts = Date.now();
+  await pool.query(
+    'INSERT INTO app_logs (id, ts, type, direction, phone, content, extra) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    [id, ts, type, direction, phone, content?.slice(0, 500), JSON.stringify(extra)]
+  ).catch(() => {});
+  return { id, ts, type, direction, phone, content, extra };
+}
+
+// ── EVOLUTION API ──
+const evoHeaders = () => ({ 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY });
 
 async function evoRequest(method, endpoint, body = null) {
   const res = await fetch(`${EVOLUTION_URL}${endpoint}`, {
-    method,
-    headers: evoHeaders(),
-    body: body ? JSON.stringify(body) : undefined
+    method, headers: evoHeaders(), body: body ? JSON.stringify(body) : undefined
   });
   const text = await res.text();
   try { return { ok: res.ok, status: res.status, data: JSON.parse(text) }; }
@@ -105,326 +137,210 @@ async function evoRequest(method, endpoint, body = null) {
 }
 
 async function getInstanceStatus() {
-  const r = await evoRequest('GET', `/instance/fetchInstances`);
+  const r = await evoRequest('GET', '/instance/fetchInstances');
   if (!r.ok) return null;
   const instances = Array.isArray(r.data) ? r.data : [];
   return instances.find(i => i.name === INSTANCE_NAME || i.instance?.instanceName === INSTANCE_NAME) || null;
 }
 
-async function createInstance() {
-  return evoRequest('POST', `/instance/create`, {
+async function createEvolutionInstance() {
+  return evoRequest('POST', '/instance/create', {
     instanceName: INSTANCE_NAME,
     integration: 'WHATSAPP-BAILEYS',
-    qrcode: true,
-    reject_call: false,
-    groupsIgnore: true,
-    alwaysOnline: true,
-    readMessages: true,
-    readStatus: false,
-    syncFullHistory: false,
+    qrcode: true, reject_call: false, groupsIgnore: true,
+    alwaysOnline: true, readMessages: true, readStatus: false, syncFullHistory: false,
     webhook: {
-      url: `${APP_URL}/webhook`,
-      byEvents: false,
-      base64: true,
+      url: `${APP_URL}/webhook`, byEvents: false, base64: true,
       events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']
     }
   });
 }
 
 async function sendText(phone, text) {
-  return evoRequest('POST', `/message/sendText/${INSTANCE_NAME}`, {
-    number: phone,
-    text
-  });
+  return evoRequest('POST', `/message/sendText/${INSTANCE_NAME}`, { number: phone, text });
 }
 
 async function sendAudio(phone, audioBase64, mimetype = 'audio/mpeg') {
   return evoRequest('POST', `/message/sendMedia/${INSTANCE_NAME}`, {
-    number: phone,
-    mediatype: 'audio',
-    mimetype,
-    media: audioBase64,
-    fileName: 'audio.mp3'
+    number: phone, mediatype: 'audio', mimetype, media: audioBase64, fileName: 'audio.mp3'
   });
 }
 
-// ============================================================
-// GEMINI AI
-// ============================================================
+// ── GEMINI ──
 async function callGemini(userMessage, persona, model = 'gemini-2.0-flash') {
   const audioInstruction = state.config.audioRoutingEnabled && ELEVENLABS_KEY && state.config.voiceId
-    ? `\n\nINSTRUÇÃO DE FORMATO: Inicie SEMPRE cada resposta com [AUDIO] ou [TEXTO].
-- Use [AUDIO] para: saudações, warmup, follow-up pessoal, mensagens curtas e emocionais.
-- Use [TEXTO] para: preços, links, dados técnicos, listas.
-NUNCA omita esse prefixo.`
+    ? `\n\nINSTRUÇÃO DE FORMATO: Inicie SEMPRE cada resposta com [AUDIO] ou [TEXTO].\n- Use [AUDIO] para: saudações, warmup, follow-up pessoal, mensagens curtas.\n- Use [TEXTO] para: preços, links, dados técnicos, listas.\nNUNCA omita esse prefixo.`
     : '';
-
-  const systemPrompt = `${persona}${audioInstruction}`;
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
+        system_instruction: { parts: [{ text: persona + audioInstruction }] },
         contents: [{ role: 'user', parts: [{ text: userMessage }] }]
       })
     }
   );
-
   if (!res.ok) throw new Error(`Gemini error: ${res.status} ${await res.text()}`);
   const data = await res.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-// ============================================================
-// ELEVENLABS TTS
-// ============================================================
+// ── ELEVENLABS ──
 async function callElevenLabs(text, voiceId) {
-  const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-    {
-      method: 'POST',
-      headers: {
-        'xi-api-key': ELEVENLABS_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
-      })
-    }
-  );
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: 'POST',
+    headers: { 'xi-api-key': ELEVENLABS_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.5, similarity_boost: 0.75 } })
+  });
   if (!res.ok) throw new Error(`ElevenLabs error: ${res.status}`);
-  const buffer = await res.arrayBuffer();
-  return Buffer.from(buffer).toString('base64');
+  return Buffer.from(await res.arrayBuffer()).toString('base64');
 }
 
-// ============================================================
-// PROCESS INCOMING MESSAGE
-// ============================================================
-const processingQueue = new Set(); // prevent duplicate processing
+// ── PROCESS MESSAGE ──
+const processingQueue = new Set();
 
 async function processMessage(phone, messageText) {
   if (processingQueue.has(phone)) return;
   processingQueue.add(phone);
-
-  addLog('message', 'in', phone, messageText);
+  await addLog('message', 'in', phone, messageText);
 
   try {
     const { persona, geminiModel, voiceId, delayMin, delayMax, audioRoutingEnabled } = state.config;
-
     if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY não configurada');
 
-    // Random human-like delay
     const delay = Math.floor(Math.random() * (delayMax - delayMin)) + delayMin;
     await new Promise(r => setTimeout(r, delay));
 
-    // Call Gemini
     const rawResponse = await callGemini(messageText, persona, geminiModel);
-    addLog('ai', 'system', phone, `Gemini: ${rawResponse.slice(0, 120)}...`);
+    await addLog('ai', 'system', phone, `Gemini: ${rawResponse.slice(0, 120)}`);
 
     const isAudio = audioRoutingEnabled && rawResponse.startsWith('[AUDIO]') && ELEVENLABS_KEY && voiceId;
     const cleanResponse = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
 
     if (isAudio) {
-      // Generate TTS and send audio
       const audioBase64 = await callElevenLabs(cleanResponse, voiceId);
       const r = await sendAudio(phone, audioBase64);
-
       if (r.ok) {
-        state.stats.audioSent++;
-        state.stats.totalSent++;
-        addLog('message', 'out', phone, `[ÁUDIO] ${cleanResponse.slice(0, 80)}`, { format: 'audio' });
-      } else {
-        throw new Error(`sendAudio failed: ${JSON.stringify(r.data)}`);
-      }
+        await incStat('audioSent'); await incStat('totalSent');
+        await addLog('message', 'out', phone, `[ÁUDIO] ${cleanResponse.slice(0, 80)}`, { format: 'audio' });
+      } else throw new Error(`sendAudio failed: ${JSON.stringify(r.data)}`);
     } else {
-      // Send text
       const r = await sendText(phone, cleanResponse);
-
       if (r.ok) {
-        state.stats.textSent++;
-        state.stats.totalSent++;
-        addLog('message', 'out', phone, cleanResponse.slice(0, 200), { format: 'text' });
-      } else {
-        throw new Error(`sendText failed: ${JSON.stringify(r.data)}`);
-      }
+        await incStat('textSent'); await incStat('totalSent');
+        await addLog('message', 'out', phone, cleanResponse.slice(0, 200), { format: 'text' });
+      } else throw new Error(`sendText failed: ${JSON.stringify(r.data)}`);
     }
-
-    saveData();
   } catch (err) {
-    state.stats.errors++;
-    addLog('error', 'system', phone, err.message);
-    saveData();
+    await incStat('errors');
+    await addLog('error', 'system', phone, err.message);
   } finally {
     processingQueue.delete(phone);
   }
 }
 
-// ============================================================
-// WEBHOOK — receives events from Evolution API
-// ============================================================
+// ── WEBHOOK ──
 app.post('/webhook', async (req, res) => {
   res.status(200).json({ ok: true });
-
   const body = req.body;
   const event = body?.event || body?.type;
 
-  // QR code updated
   if (event === 'qrcode.updated' || event === 'QRCODE_UPDATED') {
     const qr = body?.data?.qrcode?.base64 || body?.data?.base64;
-    if (qr) {
-      state._qrBase64 = qr;
-      state._qrTs = Date.now();
-      addLog('info', 'system', null, 'QR Code atualizado — escaneie no dashboard');
-    }
+    if (qr) { state._qrBase64 = qr; await addLog('info', 'system', null, 'QR Code atualizado'); }
     return;
   }
-
-  // Connection state
   if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
     const status = body?.data?.state || body?.data?.status;
     state._connectionState = status;
-    addLog('info', 'system', null, `Conexão: ${status}`);
-    if (status === 'open') { state._qrBase64 = null; saveData(); }
+    await addLog('info', 'system', null, `Conexão: ${status}`);
+    if (status === 'open') state._qrBase64 = null;
     return;
   }
-
-  // New message
   if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
     const msg = body?.data?.messages?.[0] || body?.data;
     if (!msg) return;
-
-    // Ignore outgoing (messages sent by the bot)
-    const fromMe = msg.key?.fromMe || msg.fromMe;
-    if (fromMe) return;
-
+    if (msg.key?.fromMe || msg.fromMe) return;
     const remoteJid = msg.key?.remoteJid || msg.remoteJid;
     const phone = remoteJid?.replace('@s.whatsapp.net', '').replace('@c.us', '');
-    if (!phone) return;
-
-    // Ignore groups
-    if (remoteJid?.includes('@g.us')) return;
-
-    // Ignore numbers in blocklist
+    if (!phone || remoteJid?.includes('@g.us')) return;
     if (state.config.ignoredNumbers?.includes(phone)) return;
-
-    // Extract text
     const messageText =
       msg.message?.conversation ||
       msg.message?.extendedTextMessage?.text ||
       msg.message?.imageMessage?.caption ||
-      (msg.message?.audioMessage ? '[O cliente enviou um áudio de voz. Responda de forma natural como se tivesse ouvido o áudio, pedindo para ele repetir por texto se necessário.]' : null) ||
-      null;
-
-    if (!messageText) return;
-
-    processMessage(phone, messageText);
+      (msg.message?.audioMessage ? '[O cliente enviou um áudio de voz. Responda de forma natural como se tivesse ouvido o áudio, pedindo para ele repetir por texto se necessário.]' : null);
+    if (messageText) processMessage(phone, messageText);
   }
 });
 
-// ============================================================
-// API ROUTES — used by dashboard
-// ============================================================
-
-// GET /api/status — instance + server status
+// ── API ROUTES ──
 app.get('/api/status', async (req, res) => {
   const instance = await getInstanceStatus().catch(() => null);
-  const connectionState = state._connectionState || 'unknown';
-  const qrAvailable = !!state._qrBase64;
-
   res.json({
     instance: instance ? {
       name: INSTANCE_NAME,
-      state: instance.instance?.state || instance.connectionStatus || connectionState,
+      state: instance.instance?.state || instance.connectionStatus || state._connectionState,
       number: instance.instance?.number || null
     } : null,
-    connectionState,
-    qrAvailable,
+    connectionState: state._connectionState,
+    qrAvailable: !!state._qrBase64,
     uptime: Math.floor((Date.now() - state.stats.startTime) / 1000),
     stats: state.stats
   });
 });
 
-// GET /api/qr — get QR code as base64 PNG
 app.get('/api/qr', async (req, res) => {
-  // Try to get fresh QR from Evolution directly
   const r = await evoRequest('GET', `/instance/connect/${INSTANCE_NAME}`).catch(() => null);
-  const evoQr = r?.data?.base64 || r?.data?.qrcode?.base64;
-
-  const qrData = evoQr || state._qrBase64;
-
-  if (!qrData) {
-    return res.status(404).json({ error: 'QR não disponível. A instância pode já estar conectada.' });
-  }
-
-  // If already a data URL, return as-is; else wrap
+  const qrData = r?.data?.base64 || r?.data?.qrcode?.base64 || state._qrBase64;
+  if (!qrData) return res.status(404).json({ error: 'QR não disponível.' });
   const dataUrl = qrData.startsWith('data:') ? qrData : `data:image/png;base64,${qrData}`;
   res.json({ qr: dataUrl });
 });
 
-// POST /api/instance/create — create or reconnect instance
 app.post('/api/instance/create', async (req, res) => {
   const existing = await getInstanceStatus();
-  if (existing) {
-    // Already exists, try to get QR
-    return res.json({ ok: true, message: 'Instância já existe', instance: existing });
-  }
-  const r = await createInstance();
-  addLog('info', 'system', null, `Instância criada: ${JSON.stringify(r.data).slice(0, 100)}`);
+  if (existing) return res.json({ ok: true, message: 'Instância já existe', instance: existing });
+  const r = await createEvolutionInstance();
+  await addLog('info', 'system', null, `Instância criada: ${JSON.stringify(r.data).slice(0, 100)}`);
   res.json({ ok: r.ok, data: r.data });
 });
 
-// DELETE /api/instance/logout — disconnect
 app.delete('/api/instance/logout', async (req, res) => {
   const r = await evoRequest('DELETE', `/instance/logout/${INSTANCE_NAME}`);
   state._connectionState = 'close';
-  addLog('info', 'system', null, 'Desconectado manualmente');
-  saveData();
+  await addLog('info', 'system', null, 'Desconectado manualmente');
   res.json({ ok: r.ok });
 });
 
-// GET /api/config — get AI config
-app.get('/api/config', (req, res) => {
-  res.json(state.config);
-});
+app.get('/api/config', (req, res) => res.json(state.config));
 
-// POST /api/config — save AI config
-app.post('/api/config', (req, res) => {
-  const allowed = ['persona', 'geminiModel', 'voiceId', 'delayMin', 'delayMax', 'audioRoutingEnabled', 'ignoredNumbers'];
-  allowed.forEach(k => {
-    if (req.body[k] !== undefined) state.config[k] = req.body[k];
-  });
-  saveData();
-  addLog('info', 'system', null, 'Configuração atualizada');
+app.post('/api/config', async (req, res) => {
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers'];
+  allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
+  await saveConfig();
+  await addLog('info', 'system', null, 'Configuração atualizada');
   res.json({ ok: true, config: state.config });
 });
 
-// GET /api/logs — paginated logs
-app.get('/api/logs', (req, res) => {
-  const page = parseInt(req.query.page) || 0;
+app.get('/api/logs', async (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
-  const type = req.query.type || null;
-  let logs = state.logs;
-  if (type) logs = logs.filter(l => l.type === type);
-  res.json({
-    total: logs.length,
-    page,
-    logs: logs.slice(page * limit, (page + 1) * limit)
-  });
+  const type  = req.query.type || null;
+  const where = type ? `WHERE type = $2` : '';
+  const params = type ? [limit, type] : [limit];
+  const { rows } = await pool.query(
+    `SELECT * FROM app_logs ${where} ORDER BY ts DESC LIMIT $1`, params
+  );
+  res.json({ total: rows.length, logs: rows });
 });
 
-// DELETE /api/logs — clear logs
-app.delete('/api/logs', (req, res) => {
-  state.logs = [];
-  saveData();
+app.delete('/api/logs', async (req, res) => {
+  await pool.query('DELETE FROM app_logs');
   res.json({ ok: true });
 });
 
-// POST /api/test — send a test message
 app.post('/api/test', async (req, res) => {
   const { phone, message } = req.body;
   if (!phone || !message) return res.status(400).json({ error: 'phone e message obrigatórios' });
@@ -432,15 +348,13 @@ app.post('/api/test', async (req, res) => {
   res.json({ ok: r.ok, data: r.data });
 });
 
-// POST /api/simulate — simulate incoming message (test AI response)
 app.post('/api/simulate', async (req, res) => {
   const { phone, message } = req.body;
   if (!phone || !message) return res.status(400).json({ error: 'phone e message obrigatórios' });
   processMessage(phone, message);
-  res.json({ ok: true, message: 'Processando... veja os logs.' });
+  res.json({ ok: true, message: 'Processando...' });
 });
 
-// POST /api/training-chat — conversa com IA treinadora para gerar persona
 app.post('/api/training-chat', async (req, res) => {
   const { messages } = req.body;
   if (!messages?.length) return res.status(400).json({ error: 'messages obrigatório' });
@@ -457,12 +371,12 @@ Faça perguntas uma por vez para entender:
 7. Próximo passo quando cliente demonstra interesse
 8. Outras informações importantes
 
-FORMATO OBRIGATÓRIO DE RESPOSTA — sempre responda com este formato exato:
+FORMATO OBRIGATÓRIO — sempre responda com:
 <RESPONSE>
 Sua resposta conversacional aqui
 </RESPONSE>
 <PERSONA_DRAFT>
-Prompt atualizado com tudo que foi coletado até agora. Escreva como um prompt de sistema completo em português, na segunda pessoa (ex: "Você é [nome]..."). Inclua apenas informações já fornecidas pelo usuário. Se ainda não há informações suficientes, escreva o que tem até agora.
+Prompt de sistema atualizado com tudo coletado até agora. Escreva como um prompt completo em português (ex: "Você é [nome]..."). Inclua só o que o usuário já informou.
 </PERSONA_DRAFT>
 
 Nunca omita essas tags.`;
@@ -472,78 +386,65 @@ Nunca omita essas tags.`;
       role: m.role === 'ai' ? 'model' : 'user',
       parts: [{ text: m.text }]
     }));
-
-    const res2 = await fetch(
+    const r = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: trainerPrompt }] },
-          contents
-        })
-      }
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ system_instruction: { parts: [{ text: trainerPrompt }] }, contents }) }
     );
-    const data = await res2.json();
+    const data = await r.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     const responseMatch = raw.match(/<RESPONSE>([\s\S]*?)<\/RESPONSE>/);
     const personaMatch  = raw.match(/<PERSONA_DRAFT>([\s\S]*?)<\/PERSONA_DRAFT>/);
-
     const text    = responseMatch ? responseMatch[1].trim() : raw.trim();
     const persona = personaMatch  ? personaMatch[1].trim()  : null;
 
-    // Auto-save the draft persona to config so it persists
     if (persona) {
       state.config.persona = persona;
-      saveData();
+      await saveConfig();
     }
-
     res.json({ ok: true, text, persona });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// POST /api/chat-test — interactive AI test in dashboard (returns response directly, no WhatsApp)
 app.post('/api/chat-test', async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'message obrigatório' });
-
   try {
     const { persona, geminiModel, voiceId, audioRoutingEnabled } = state.config;
     if (!GEMINI_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY não configurada' });
-
     const rawResponse = await callGemini(message, persona, geminiModel);
     const isAudio = audioRoutingEnabled && rawResponse.startsWith('[AUDIO]') && ELEVENLABS_KEY && voiceId;
     const cleanText = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
-
     if (isAudio) {
       const audioBase64 = await callElevenLabs(cleanText, voiceId);
       return res.json({ ok: true, format: 'audio', text: cleanText, audioBase64, mimeType: 'audio/mpeg' });
     }
-
     res.json({ ok: true, format: 'text', text: cleanText });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ============================================================
-// STARTUP
-// ============================================================
+// ── STARTUP ──
 app.listen(PORT, async () => {
-  console.log(`\n🚀 ClouDNext AI rodando na porta ${PORT}`);
+  console.log(`\n🚀 ClouDNext AI v2.0 rodando na porta ${PORT}`);
   console.log(`📊 Dashboard: http://localhost:${PORT}`);
   console.log(`🔗 Webhook: ${APP_URL}/webhook`);
-  console.log(`🤖 Instância Evolution: ${INSTANCE_NAME}\n`);
 
-  // Check if instance already exists on startup
+  await initDB();
+  console.log('✅ PostgreSQL conectado');
+
+  await loadConfig();
+  await loadStats();
+  console.log('✅ Config e stats carregados do banco');
+
   const existing = await getInstanceStatus().catch(() => null);
   if (existing) {
-    const s = existing.instance?.state || existing.connectionStatus || 'unknown';
-    state._connectionState = s;
-    console.log(`📱 Instância "${INSTANCE_NAME}" encontrada — status: ${s}`);
+    state._connectionState = existing.instance?.state || existing.connectionStatus || 'unknown';
+    console.log(`📱 Instância "${INSTANCE_NAME}" — status: ${state._connectionState}`);
   } else {
     console.log(`⚠️  Instância "${INSTANCE_NAME}" não encontrada. Crie no dashboard.`);
   }
