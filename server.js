@@ -519,11 +519,18 @@ app.get('/api/training-history', async (req, res) => {
 app.get('/api/elevenlabs/credits', async (req, res) => {
   if (!ELEVENLABS_KEY) return res.json({ ok: false, error: 'Sem chave API' });
   try {
-    const r = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
+    const r = await fetch('https://api.elevenlabs.io/v1/user', {
       headers: { 'xi-api-key': ELEVENLABS_KEY }
     });
     const data = await r.json();
-    res.json({ ok: true, characterCount: data.character_count, characterLimit: data.character_limit, tier: data.tier });
+    console.log('[ElevenLabs user]', JSON.stringify(data).slice(0,300));
+    const sub = data.subscription || data;
+    res.json({
+      ok: true,
+      characterCount: sub.character_count ?? data.character_count ?? 0,
+      characterLimit: sub.character_limit ?? data.character_limit ?? 0,
+      tier: sub.tier ?? data.tier ?? 'unknown'
+    });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
