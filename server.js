@@ -260,6 +260,8 @@ app.post('/webhook', async (req, res) => {
   res.status(200).json({ ok: true });
   const body = req.body;
   const event = body?.event || body?.type;
+  console.log(`[WEBHOOK] event="${event}" instance="${body?.instance}" keys=${Object.keys(body||{}).join(',')}`);
+  console.log(`[WEBHOOK RAW] ${JSON.stringify(body).slice(0,400)}`);
 
   if (event === 'qrcode.updated' || event === 'QRCODE_UPDATED') {
     const qr = body?.data?.qrcode?.base64 || body?.data?.base64;
