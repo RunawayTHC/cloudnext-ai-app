@@ -50,10 +50,41 @@ async function initDB() {
       key TEXT PRIMARY KEY,
       value BIGINT DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS conversations (
+      phone TEXT PRIMARY KEY,
+      history JSONB NOT NULL DEFAULT '[]',
+      updated_at BIGINT NOT NULL
+    );
     INSERT INTO app_stats (key, value) VALUES
       ('totalSent',0),('textSent',0),('audioSent',0),('errors',0),('startTime', EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
     ON CONFLICT (key) DO NOTHING;
   `);
+}
+
+// ── CONVERSATION HISTORY ──
+const MAX_HISTORY = 20; // max turns (1 turn = user + AI)
+const HISTORY_TTL = 24 * 60 * 60 * 1000; // 24h inactivity resets context
+
+async function getHistory(phone) {
+  const { rows } = await pool.query('SELECT history, updated_at FROM conversations WHERE phone=$1', [phone]);
+  if (!rows.length) return [];
+  if (Date.now() - rows[0].updated_at > HISTORY_TTL) {
+    await pool.query('DELETE FROM conversations WHERE phone=$1', [phone]);
+    return [];
+  }
+  return rows[0].history;
+}
+
+async function saveHistory(phone, history) {
+  const trimmed = history.slice(-MAX_HISTORY * 2); // keep last N pairs
+  await pool.query(
+    'INSERT INTO conversations (phone, history, updated_at) VALUES ($1,$2,$3) ON CONFLICT (phone) DO UPDATE SET history=$2, updated_at=$3',
+    [phone, JSON.stringify(trimmed), Date.now()]
+  );
+}
+
+async function clearHistory(phone) {
+  await pool.query('DELETE FROM conversations WHERE phone=$1', [phone]);
 }
 
 // ── IN-MEMORY STATE (fast reads, DB-backed writes) ──
@@ -230,12 +261,18 @@ function shouldSendAudio(rawResponse) {
 }
 
 // ── GEMINI ──
-async function callGemini(userMessage, persona, model = 'gemini-2.0-flash') {
+async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', history = []) {
   const audioInstruction = state.config.audioRoutingEnabled && ELEVENLABS_KEY && state.config.voiceId
     ? `\n\nINSTRUÇÃO DE FORMATO: Inicie SEMPRE cada resposta com [AUDIO] ou [TEXTO].\n- Use [AUDIO] para: saudações, warmup, follow-up pessoal, mensagens curtas.\n- Use [TEXTO] para: preços, links, dados técnicos, listas.\nNUNCA omita esse prefixo.`
     : '';
 
   const timeCtx = `\n\n[HORA ATUAL EM BRASÍLIA: ${brazilNow()}]`;
+
+  // Build multi-turn contents from history + current message
+  const contents = [
+    ...history.map(h => ({ role: h.role, parts: [{ text: h.text }] })),
+    { role: 'user', parts: [{ text: userMessage }] }
+  ];
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
@@ -243,7 +280,7 @@ async function callGemini(userMessage, persona, model = 'gemini-2.0-flash') {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: persona + timeCtx + audioInstruction }] },
-        contents: [{ role: 'user', parts: [{ text: userMessage }] }]
+        contents
       })
     }
   );
@@ -279,11 +316,20 @@ async function processMessage(phone, messageText) {
     const delay = Math.floor(Math.random() * (delayMax - delayMin)) + delayMin;
     await new Promise(r => setTimeout(r, delay));
 
-    const rawResponse = await callGemini(messageText, persona, geminiModel);
+    const history = await getHistory(phone);
+    const rawResponse = await callGemini(messageText, persona, geminiModel, history);
     await addLog('ai', 'system', phone, `Gemini: ${rawResponse.slice(0, 120)}`);
 
-    const isAudio = shouldSendAudio(rawResponse);
     const cleanResponse = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
+
+    // Save updated history
+    await saveHistory(phone, [
+      ...history,
+      { role: 'user', text: messageText },
+      { role: 'model', text: cleanResponse }
+    ]);
+
+    const isAudio = shouldSendAudio(rawResponse);
 
     if (isAudio) {
       const audioBase64 = await callElevenLabs(cleanResponse, voiceId);
@@ -419,6 +465,11 @@ app.post('/api/test', async (req, res) => {
   if (!phone || !message) return res.status(400).json({ error: 'phone e message obrigatórios' });
   const r = await sendText(phone, message);
   res.json({ ok: r.ok, data: r.data });
+});
+
+app.delete('/api/conversations/:phone', async (req, res) => {
+  await clearHistory(req.params.phone);
+  res.json({ ok: true });
 });
 
 app.post('/api/simulate', async (req, res) => {
