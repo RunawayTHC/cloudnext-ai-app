@@ -157,10 +157,17 @@ async function createEvolutionInstance() {
 }
 
 async function updateWebhook() {
-  return evoRequest('POST', `/webhook/set/${INSTANCE_NAME}`, {
-    url: `${APP_URL}/webhook`, byEvents: false, base64: true,
-    events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']
+  const r = await evoRequest('POST', `/webhook/set/${INSTANCE_NAME}`, {
+    webhook: {
+      enabled: true,
+      url: `${APP_URL}/webhook`,
+      byEvents: false,
+      base64: true,
+      events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']
+    }
   });
+  console.log(`[Webhook Set] status=${r.status} data=${JSON.stringify(r.data).slice(0,200)}`);
+  return r;
 }
 
 async function sendText(phone, text) {
