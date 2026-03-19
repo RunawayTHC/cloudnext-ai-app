@@ -855,7 +855,16 @@ async function sendAI(){
     removeTyping('at');
     if(!d.ok){addMsg('ai-msgs','ai','❌ '+d.error);}
     else{
-      if(d.persona){pendingPersona=d.persona;document.getElementById('ai-save-bar').style.display='flex';}
+      // Atualiza persona em tempo real a cada mensagem
+      if(d.persona){
+        pendingPersona=d.persona;
+        document.getElementById('cfg-persona').value=d.persona;
+        document.getElementById('ai-save-bar').style.display='flex';
+        // Pisca o campo pra mostrar que atualizou
+        const ta=document.getElementById('cfg-persona');
+        ta.style.borderColor='var(--wa-green)';
+        setTimeout(()=>ta.style.borderColor='',1200);
+      }
       aiMsgs.push({role:'ai',text:d.text});
       addMsg('ai-msgs','ai',d.text);
     }
@@ -864,12 +873,11 @@ async function sendAI(){
 }
 
 function saveAIPersona(){
-  if(!pendingPersona)return;
-  document.getElementById('cfg-persona').value=pendingPersona;
+  // Persona já foi salva automaticamente no servidor — só fecha e mostra banner
   closeAIModal();
   document.querySelector('[data-page="training"]').click();
   document.getElementById('persona-banner').style.display='flex';
-  toast('✅ Prompt carregado! Revise e clique em Salvar.');
+  toast('✅ Persona salva automaticamente!');
 }
 
 // ── SEND MODAL ──

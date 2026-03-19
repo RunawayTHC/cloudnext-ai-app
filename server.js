@@ -433,19 +433,27 @@ app.post('/api/training-chat', async (req, res) => {
   const { messages } = req.body;
   if (!messages?.length) return res.status(400).json({ error: 'messages obrigatório' });
 
-  const trainerPrompt = `Você é um assistente de configuração de agentes de IA para WhatsApp. Sua função é ajudar o usuário a configurar o agente de vendas através de uma conversa natural em português.
+  const trainerPrompt = `Você é uma assistente de configuração de agentes de IA para WhatsApp. Ajude o usuário a configurar o agente de vendas conversando em português.
 
 Faça perguntas uma por vez para entender:
 1. Nome da empresa e do responsável
-2. Produto ou serviço vendido (descrição, diferenciais)
+2. Produto ou serviço (descrição, diferenciais)
 3. Preço e condições de pagamento
-4. Público-alvo ideal
-5. Tom de comunicação (formal, informal, descontraído)
+4. Público-alvo
+5. Tom de comunicação (formal/informal)
 6. Como tratar objeções de preço
-7. O que fazer quando cliente demonstra interesse (agendar reunião? enviar link?)
-8. Informações importantes que a IA precisa saber
+7. Próximo passo quando cliente demonstra interesse
+8. Outras informações importantes
 
-Seja amigável e objetivo. Após coletar todas as informações necessárias, o usuário pode pedir para "gerar o prompt" ou "salvar" — então responda com o prompt completo entre as tags <PERSONA> e </PERSONA>, sem mais nenhum texto fora dessas tags.`;
+FORMATO OBRIGATÓRIO DE RESPOSTA — sempre responda com este formato exato:
+<RESPONSE>
+Sua resposta conversacional aqui
+</RESPONSE>
+<PERSONA_DRAFT>
+Prompt atualizado com tudo que foi coletado até agora. Escreva como um prompt de sistema completo em português, na segunda pessoa (ex: "Você é [nome]..."). Inclua apenas informações já fornecidas pelo usuário. Se ainda não há informações suficientes, escreva o que tem até agora.
+</PERSONA_DRAFT>
+
+Nunca omita essas tags.`;
 
   try {
     const contents = messages.map(m => ({
@@ -465,15 +473,21 @@ Seja amigável e objetivo. Após coletar todas as informações necessárias, o 
       }
     );
     const data = await res2.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Check if persona was generated
-    const personaMatch = text.match(/<PERSONA>([\s\S]*?)<\/PERSONA>/);
-    if (personaMatch) {
-      return res.json({ ok: true, text: text.replace(/<PERSONA>[\s\S]*?<\/PERSONA>/, '✅ Prompt gerado! Clique em "Salvar como Persona" para aplicar.'), persona: personaMatch[1].trim() });
+    const responseMatch = raw.match(/<RESPONSE>([\s\S]*?)<\/RESPONSE>/);
+    const personaMatch  = raw.match(/<PERSONA_DRAFT>([\s\S]*?)<\/PERSONA_DRAFT>/);
+
+    const text    = responseMatch ? responseMatch[1].trim() : raw.trim();
+    const persona = personaMatch  ? personaMatch[1].trim()  : null;
+
+    // Auto-save the draft persona to config so it persists
+    if (persona) {
+      state.config.persona = persona;
+      saveData();
     }
 
-    res.json({ ok: true, text });
+    res.json({ ok: true, text, persona });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
