@@ -324,17 +324,43 @@ async function resolvePhone(rawPhone, remoteJid) {
   return resolved || rawPhone;
 }
 
+// ── CONTACT TRACKING ──
+const contactsMap = new Map(); // rawPhone → {name, rawJid, firstSeen, lastSeen}
+let lastLidContact = null; // {rawPhone, timestamp} for time-based LID correlation
+
+function trackContact(rawPhone, name, rawJid) {
+  const ex = contactsMap.get(rawPhone) || {};
+  contactsMap.set(rawPhone, {
+    name: name || ex.name || '',
+    rawJid,
+    firstSeen: ex.firstSeen || Date.now(),
+    lastSeen: Date.now()
+  });
+  if (rawJid?.includes('@lid')) lastLidContact = { rawPhone, timestamp: Date.now() };
+}
+
 // ── HUMAN PAUSE SYSTEM ──
 const humanPaused = new Map();   // phone -> timestamp of last human interaction
 const aiSentIds = new Set();     // message IDs sent by the AI (to distinguish from human sends)
 
-function isHumanPaused(phone) {
+function isHumanPaused(rawPhone, resolvedPhone) {
   if (!state.config.pauseOnHumanEnabled) return false;
-  const last = humanPaused.get(phone);
-  if (!last) return false;
   const ms = (state.config.pauseOnHumanTimeout || 30) * 60 * 1000;
-  if (Date.now() - last >= ms) { humanPaused.delete(phone); return false; }
-  return true;
+  const check = (p) => {
+    if (!p) return false;
+    const last = humanPaused.get(p);
+    if (!last) return false;
+    if (Date.now() - last >= ms) { humanPaused.delete(p); return false; }
+    return true;
+  };
+  if (check(rawPhone) || check(resolvedPhone)) return true;
+  // Cross-check via lidToPhoneCache
+  const mapped = lidToPhoneCache.get(rawPhone);
+  if (mapped && check(mapped)) return true;
+  for (const [lid, mp] of lidToPhoneCache.entries()) {
+    if (mp === rawPhone && check(lid)) return true;
+  }
+  return false;
 }
 
 function resumeContact(phone) {
@@ -479,11 +505,11 @@ async function callElevenLabs(text, voiceId) {
 // ── PROCESS MESSAGE ──
 const processingQueue = new Set();
 
-async function processMessage(phone, messageText, sendTarget = null) {
+async function processMessage(phone, messageText, sendTarget = null, rawPhone = null) {
   if (processingQueue.has(phone)) return;
   if (!state.config.aiEnabled) return;
   if (state.config.restrictAIOutsideHours && !isWithinBusinessHours()) return;
-  if (isHumanPaused(phone)) {
+  if (isHumanPaused(rawPhone || phone, phone)) {
     await addLog('info', 'system', phone, `IA inativa (atendimento humano ativo)`);
     return;
   }
@@ -593,20 +619,35 @@ app.post('/webhook', async (req, res) => {
         const msgId = msg.key?.id;
         if (!msgId || !aiSentIds.has(msgId)) {
           // Human interaction detected
-          humanPaused.set(phone, Date.now());
+          humanPaused.set(rawPhone, Date.now());
+          // Time-based LID correlation: if human sends to @s.whatsapp.net shortly after a @lid message, map them
+          if (!remoteJid?.includes('@lid') && lastLidContact && Date.now() - lastLidContact.timestamp < 300000) {
+            if (!lidToPhoneCache.has(lastLidContact.rawPhone)) {
+              lidToPhoneCache.set(lastLidContact.rawPhone, rawPhone);
+              console.log(`[LID CORR] ${lastLidContact.rawPhone} → ${rawPhone} (time-based)`);
+            }
+            humanPaused.set(lastLidContact.rawPhone, Date.now());
+          }
+          // Also pause any reverse-mapped lids
+          for (const [lid, mp] of lidToPhoneCache.entries()) {
+            if (mp === rawPhone) humanPaused.set(lid, Date.now());
+          }
           const humanText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
           if (humanText) {
-            const history = await getHistory(phone);
-            await saveHistory(phone, [...history, { role: 'model', text: `[Atendente humano]: ${humanText}` }]);
+            const pausedPhone = lidToPhoneCache.get(lastLidContact?.rawPhone) === rawPhone ? lastLidContact.rawPhone : rawPhone;
+            const history = await getHistory(pausedPhone);
+            await saveHistory(pausedPhone, [...history, { role: 'model', text: `[Atendente humano]: ${humanText}` }]);
           }
-          await addLog('info', 'system', phone, `IA pausada: interação humana detectada. Retoma em ${state.config.pauseOnHumanTimeout}min`);
+          await addLog('info', 'system', rawPhone, `IA pausada: interação humana detectada. Retoma em ${state.config.pauseOnHumanTimeout}min`);
         }
       }
       return;
     }
 
-    console.log(`[MSG] remoteJid="${remoteJid}" phone="${phone}" ignored=${JSON.stringify(state.config.ignoredNumbers)} blocked=${state.config.ignoredNumbers?.includes(phone)}`);
-    if (state.config.ignoredNumbers?.includes(phone)) return;
+    trackContact(rawPhone, msg.pushName, remoteJid);
+    const isBlocked = state.config.ignoredNumbers?.includes(rawPhone) || (phone !== rawPhone && state.config.ignoredNumbers?.includes(phone));
+    console.log(`[MSG] rawPhone="${rawPhone}" phone="${phone}" blocked=${isBlocked}`);
+    if (isBlocked) return;
 
     const messageText =
       msg.message?.conversation ||
@@ -615,7 +656,7 @@ app.post('/webhook', async (req, res) => {
       (msg.message?.audioMessage ? '[O cliente enviou um áudio de voz. Responda de forma natural como se tivesse ouvido o áudio, pedindo para ele repetir por texto se necessário.]' : null);
     // For @lid contacts, pass the original JID as sendTarget so the reply reaches the right device
     const sendTarget = remoteJid?.includes('@lid') ? remoteJid : null;
-    if (messageText) processMessage(phone, messageText, sendTarget);
+    if (messageText) processMessage(phone, messageText, sendTarget, rawPhone);
   }
 });
 
@@ -815,6 +856,38 @@ app.get('/api/elevenlabs/credits', async (req, res) => {
       tier: sub.tier ?? data.tier ?? 'unknown'
     });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// ── CONTACTS API ──
+app.get('/api/contacts', (req, res) => {
+  const contacts = [];
+  for (const [id, info] of contactsMap.entries()) {
+    contacts.push({
+      id,
+      name: info.name,
+      rawJid: info.rawJid,
+      lastSeen: info.lastSeen,
+      blocked: !!(state.config.ignoredNumbers?.includes(id))
+    });
+  }
+  contacts.sort((a, b) => b.lastSeen - a.lastSeen);
+  res.json({ ok: true, contacts });
+});
+
+app.post('/api/contacts/:id/block', async (req, res) => {
+  const id = decodeURIComponent(req.params.id);
+  if (!state.config.ignoredNumbers.includes(id)) {
+    state.config.ignoredNumbers.push(id);
+    await saveConfig();
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/contacts/:id/block', async (req, res) => {
+  const id = decodeURIComponent(req.params.id);
+  state.config.ignoredNumbers = state.config.ignoredNumbers.filter(n => n !== id);
+  await saveConfig();
+  res.json({ ok: true });
 });
 
 // ── HUMAN PAUSE ENDPOINTS ──

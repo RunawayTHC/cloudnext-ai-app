@@ -535,10 +535,16 @@
               </div>
             </div>
             <div class="card">
-              <div class="card-label">Números Ignorados</div>
-              <div class="fg" style="margin:0">
-                <label>Um por linha, sem + (a IA não responde esses números)</label>
-                <textarea id="cfg-ignored" rows="3" placeholder="5511999998888&#10;5511888887777"></textarea>
+              <div class="card-label">Contatos Conhecidos</div>
+              <div id="contacts-list" style="margin-bottom:10px;max-height:200px;overflow-y:auto;">
+                <div style="font-size:12px;color:var(--wa-muted);padding:8px 0;">Aguardando mensagens...</div>
+              </div>
+              <button class="btn btn-ghost" onclick="loadContacts()" style="font-size:12px;width:100%;margin-bottom:10px;">↻ Atualizar contatos</button>
+              <div style="border-top:1px solid var(--border);padding-top:10px;">
+                <div class="card-label" style="font-size:11px;margin-bottom:6px;">BLOQUEIO MANUAL (por ID/número)</div>
+                <div class="fg" style="margin:0">
+                  <textarea id="cfg-ignored" rows="2" placeholder="5511999998888&#10;145242925830329"></textarea>
+                </div>
               </div>
             </div>
           </div>
@@ -819,7 +825,7 @@ document.querySelectorAll('.s-item').forEach(el => {
     el.classList.add('active');
     document.getElementById('page-'+el.dataset.page).classList.add('active');
     if(el.dataset.page==='logs') loadLogs();
-    if(el.dataset.page==='training'){ loadConfig(); loadElevenLabsCredits(); }
+    if(el.dataset.page==='training'){ loadConfig(); loadElevenLabsCredits(); loadContacts(); }
   });
 });
 
@@ -1125,6 +1131,41 @@ async function resumeContact(phone) {
   loadPausedContacts();
 }
 setInterval(loadPausedContacts, 15000);
+setInterval(loadContacts, 30000);
+
+async function loadContacts() {
+  const d = await fetch('/api/contacts').then(r=>r.json()).catch(()=>null);
+  const el = document.getElementById('contacts-list');
+  if (!d?.contacts?.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--wa-muted);padding:8px 0;">Nenhum contato ainda. Aguardando mensagens...</div>';
+    return;
+  }
+  el.innerHTML = d.contacts.map(c => {
+    const initial = (c.name || c.id).charAt(0).toUpperCase();
+    const label = c.name ? `${c.name} <span style="color:var(--wa-muted);font-size:11px;">(${c.id})</span>` : `<span style="font-family:monospace">${c.id}</span>`;
+    const btnStyle = c.blocked
+      ? 'background:#ef4444;color:white;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;'
+      : 'background:#e9edef;color:#111b21;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;';
+    const btnText = c.blocked ? 'Bloqueado' : 'Bloquear';
+    const btnClick = c.blocked
+      ? `unblockContact('${c.id}')`
+      : `blockContact('${c.id}')`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0f2f5;">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--wa-green);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:white;flex-shrink:0;">${initial}</div>
+      <div style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+      <button onclick="${btnClick}" style="${btnStyle}">${btnText}</button>
+    </div>`;
+  }).join('');
+}
+
+async function blockContact(id) {
+  await fetch(`/api/contacts/${encodeURIComponent(id)}/block`, {method:'POST'});
+  loadContacts();
+}
+async function unblockContact(id) {
+  await fetch(`/api/contacts/${encodeURIComponent(id)}/block`, {method:'DELETE'});
+  loadContacts();
+}
 
 function removeAIAttach() {
   aiAttachFile = null; aiAttachBase64 = null; aiAttachMime = null;
