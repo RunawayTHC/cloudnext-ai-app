@@ -87,6 +87,37 @@ async function clearHistory(phone) {
   await pool.query('DELETE FROM conversations WHERE phone=$1', [phone]);
 }
 
+// ── RELAY (mirror mode) ──
+const relay = {
+  enabled: false,
+  instanceName: null,   // Evolution instance being mirrored (e.g. "cloudchat_93")
+  forwardUrl: null,     // Original webhook URL to forward events to (e.g. CloudChat)
+};
+
+async function loadRelayConfig() {
+  const { rows } = await pool.query("SELECT key, value FROM app_config WHERE key LIKE 'relay_%'");
+  const map = {};
+  rows.forEach(r => { map[r.key] = r.value; });
+  if (map.relay_enabled === 'true') relay.enabled = true;
+  if (map.relay_instance) relay.instanceName = map.relay_instance || null;
+  if (map.relay_forward_url) relay.forwardUrl = map.relay_forward_url || null;
+}
+
+async function saveRelayConfig() {
+  const entries = [
+    ['relay_enabled', String(relay.enabled)],
+    ['relay_instance', relay.instanceName || ''],
+    ['relay_forward_url', relay.forwardUrl || ''],
+  ];
+  for (const [key, value] of entries) {
+    await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
+  }
+}
+
+function activeInstance() {
+  return relay.enabled && relay.instanceName ? relay.instanceName : INSTANCE_NAME;
+}
+
 // ── IN-MEMORY STATE (fast reads, DB-backed writes) ──
 const state = {
   config: {
@@ -188,7 +219,8 @@ async function getInstanceStatus() {
   const r = await evoRequest('GET', '/instance/fetchInstances');
   if (!r.ok) return null;
   const instances = Array.isArray(r.data) ? r.data : [];
-  return instances.find(i => i.name === INSTANCE_NAME || i.instance?.instanceName === INSTANCE_NAME) || null;
+  const target = activeInstance();
+  return instances.find(i => i.name === target || i.instance?.instanceName === target) || null;
 }
 
 async function createEvolutionInstance() {
@@ -219,11 +251,11 @@ async function updateWebhook() {
 }
 
 async function sendText(phone, text) {
-  return evoRequest('POST', `/message/sendText/${INSTANCE_NAME}`, { number: phone, text });
+  return evoRequest('POST', `/message/sendText/${activeInstance()}`, { number: phone, text });
 }
 
 async function sendAudio(phone, audioBase64, mimetype = 'audio/mpeg') {
-  return evoRequest('POST', `/message/sendMedia/${INSTANCE_NAME}`, {
+  return evoRequest('POST', `/message/sendMedia/${activeInstance()}`, {
     number: phone, mediatype: 'audio', mimetype, media: audioBase64, fileName: 'audio.mp3'
   });
 }
@@ -358,6 +390,15 @@ async function processMessage(phone, messageText) {
 app.post('/webhook', async (req, res) => {
   res.status(200).json({ ok: true });
   const body = req.body;
+
+  // Relay: forward original event to CloudChat (fire-and-forget)
+  if (relay.enabled && relay.forwardUrl) {
+    fetch(relay.forwardUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(() => {});
+  }
   const event = body?.event || body?.type;
   console.log(`[WEBHOOK] event="${event}" instance="${body?.instance}" keys=${Object.keys(body||{}).join(',')}`);
   console.log(`[WEBHOOK RAW] ${JSON.stringify(body).slice(0,400)}`);
@@ -396,14 +437,15 @@ app.get('/api/status', async (req, res) => {
   const instance = await getInstanceStatus().catch(() => null);
   res.json({
     instance: instance ? {
-      name: INSTANCE_NAME,
+      name: activeInstance(),
       state: instance.instance?.state || instance.connectionStatus || state._connectionState,
       number: instance.instance?.number || null
     } : null,
     connectionState: state._connectionState,
     qrAvailable: !!state._qrBase64,
     uptime: Math.floor((Date.now() - state.stats.startTime) / 1000),
-    stats: state.stats
+    stats: state.stats,
+    relay: { enabled: relay.enabled, instanceName: relay.instanceName, forwardUrl: relay.forwardUrl }
   });
 });
 
@@ -585,6 +627,71 @@ app.get('/api/elevenlabs/credits', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
+// ── RELAY ENDPOINTS ──
+app.get('/api/evolution/instances', async (req, res) => {
+  const r = await evoRequest('GET', '/instance/fetchInstances');
+  if (!r.ok) return res.status(500).json({ ok: false, error: 'Falha ao buscar instâncias' });
+  const raw = Array.isArray(r.data) ? r.data : [];
+  const instances = raw.map(i => ({
+    name: i.name || i.instance?.instanceName,
+    state: i.instance?.state || i.connectionStatus || 'unknown',
+    number: i.instance?.number || null,
+  }));
+  res.json({ ok: true, instances });
+});
+
+app.get('/api/relay/config', (req, res) => {
+  res.json({ ok: true, relay });
+});
+
+app.post('/api/relay/activate', async (req, res) => {
+  const { instanceName, forwardUrl } = req.body;
+  if (!instanceName) return res.status(400).json({ error: 'instanceName obrigatório' });
+
+  // Fetch current webhook URL before overwriting (so we can restore + use as forwardUrl)
+  const wh = await evoRequest('GET', `/webhook/find/${instanceName}`);
+  const detectedUrl = wh.data?.webhook?.url || wh.data?.url || null;
+
+  const r = await evoRequest('POST', `/webhook/set/${instanceName}`, {
+    webhook: {
+      enabled: true,
+      url: `${APP_URL}/webhook`,
+      byEvents: false,
+      base64: true,
+      events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']
+    }
+  });
+  if (!r.ok) return res.status(500).json({ ok: false, error: 'Falha ao atualizar webhook na Evolution', detail: r.data });
+
+  relay.enabled = true;
+  relay.instanceName = instanceName;
+  relay.forwardUrl = forwardUrl || detectedUrl || null;
+  await saveRelayConfig();
+  await addLog('info', 'system', null, `Modo Espelho ativado: ${instanceName}. Encaminhar para: ${relay.forwardUrl || 'não configurado'}`);
+  res.json({ ok: true, relay, detectedUrl });
+});
+
+app.post('/api/relay/deactivate', async (req, res) => {
+  if (relay.enabled && relay.instanceName && relay.forwardUrl) {
+    await evoRequest('POST', `/webhook/set/${relay.instanceName}`, {
+      webhook: {
+        enabled: true,
+        url: relay.forwardUrl,
+        byEvents: false,
+        base64: true,
+        events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']
+      }
+    });
+  }
+  const prev = relay.instanceName;
+  relay.enabled = false;
+  relay.instanceName = null;
+  relay.forwardUrl = null;
+  await saveRelayConfig();
+  await addLog('info', 'system', null, `Modo Espelho desativado (era: ${prev})`);
+  res.json({ ok: true });
+});
+
 // ── STARTUP ──
 app.listen(PORT, async () => {
   console.log(`\n🚀 ClouDNext AI v2.0 rodando na porta ${PORT}`);
@@ -596,7 +703,8 @@ app.listen(PORT, async () => {
 
   await loadConfig();
   await loadStats();
-  console.log('✅ Config e stats carregados do banco');
+  await loadRelayConfig();
+  console.log('✅ Config, stats e relay carregados do banco');
 
   const existing = await getInstanceStatus().catch(() => null);
   if (existing) {

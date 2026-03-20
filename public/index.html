@@ -367,6 +367,57 @@
         </div>
       </div>
       <div class="scroll-area" style="background:#f0f2f5;">
+        <!-- ── MODO ESPELHO ── -->
+        <div class="card" style="margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div>
+              <div class="card-label" style="margin-bottom:2px;">Modo Espelho</div>
+              <p style="font-size:12px;color:var(--wa-muted);">Use uma instância já conectada — sem escanear novo QR</p>
+            </div>
+            <div id="relay-chip" class="chip chip-gray" style="font-size:12px;flex-shrink:0;">Inativo</div>
+          </div>
+
+          <!-- painel inativo -->
+          <div id="relay-inactive-panel">
+            <p style="font-size:13px;color:var(--wa-muted);margin-bottom:14px;line-height:1.7;">Selecione uma instância do Evolution já conectada. O ClouDNext irá interceptar as mensagens e responder com IA, encaminhando os eventos originais ao CloudChat.</p>
+            <button class="btn btn-ghost" onclick="loadInstances()" id="btn-load-instances">
+              <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+              Buscar Instâncias do Evolution
+            </button>
+            <div id="relay-instance-list" style="margin-top:12px;display:none;"></div>
+            <div id="relay-form" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid #f0f2f5;">
+              <p style="font-size:12px;font-weight:700;color:var(--wa-muted);margin-bottom:8px;">INSTÂNCIA SELECIONADA: <strong id="relay-selected-name" style="color:var(--wa-green);"></strong></p>
+              <div class="fg">
+                <label>URL do Webhook CloudChat (para encaminhar eventos)</label>
+                <input type="text" id="relay-forward-url" placeholder="https://cloudchat.url/webhook/instancia">
+                <div class="hint">Detectado automaticamente se disponível. Deixe vazio para não encaminhar.</div>
+              </div>
+              <div class="btn-row">
+                <button class="btn btn-green" onclick="activateRelay()">
+                  <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+                  Ativar Espelho
+                </button>
+                <button class="btn btn-ghost" onclick="cancelRelaySelect()">Cancelar</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- painel ativo -->
+          <div id="relay-active-panel" style="display:none;">
+            <div style="background:#e7f8f3;border:1.5px solid var(--wa-green);border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px;line-height:1.9;">
+              <strong>Instância espelhada:</strong> <span id="relay-active-inst" style="color:var(--wa-green);font-weight:700;">—</span><br>
+              <span style="color:var(--wa-muted);">Encaminhando para: <span id="relay-active-fwd">não configurado</span></span>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-ghost" onclick="reactivateRelay()">
+                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                Reativar Webhook
+              </button>
+              <button class="btn btn-red" onclick="deactivateRelay()">Desativar Espelho</button>
+            </div>
+          </div>
+        </div>
+
         <div class="two-col">
           <div class="card">
             <div class="card-label">Status da Instância</div>
@@ -381,7 +432,7 @@
               <strong style="color:var(--wa-green);">✓</strong> Suporte a texto e áudio clonado
             </div>
           </div>
-          <div class="card">
+          <div class="card" id="qr-card">
             <div class="card-label">QR Code</div>
             <div class="qr-wrapper">
               <div class="qr-placeholder" id="qr-placeholder">
@@ -712,6 +763,7 @@ async function poll() {
     if(cct)cct.textContent=open?'WhatsApp conectado — respostas diretas aqui':'WhatsApp desconectado';
 
     if(conn&&d.qrAvailable) loadQR();
+    if(d.relay) updateRelayUI(d.relay);
     loadRecentLogs();
   } catch{}
 }
@@ -989,8 +1041,107 @@ async function simulate(){
 // Close modals on overlay click
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 
+// ── RELAY (MODO ESPELHO) ──
+let _relaySelectedInst = null;
+
+function updateRelayUI(r) {
+  const active = r?.enabled && r?.instanceName;
+  document.getElementById('relay-inactive-panel').style.display = active ? 'none' : 'block';
+  document.getElementById('relay-active-panel').style.display   = active ? 'block' : 'none';
+  const chip = document.getElementById('relay-chip');
+  if (active) {
+    chip.className = 'chip chip-green';
+    chip.textContent = 'Ativo';
+    document.getElementById('relay-active-inst').textContent = r.instanceName;
+    document.getElementById('relay-active-fwd').textContent  = r.forwardUrl || 'não configurado';
+    // Hide QR card when relay is active (no need to scan)
+    document.getElementById('qr-card').style.opacity = '0.4';
+    document.getElementById('qr-card').style.pointerEvents = 'none';
+  } else {
+    chip.className = 'chip chip-gray';
+    chip.textContent = 'Inativo';
+    document.getElementById('qr-card').style.opacity = '';
+    document.getElementById('qr-card').style.pointerEvents = '';
+  }
+}
+
+async function loadInstances() {
+  const btn = document.getElementById('btn-load-instances');
+  btn.disabled = true; btn.textContent = 'Buscando...';
+  try {
+    const d = await fetch('/api/evolution/instances').then(r=>r.json());
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> Atualizar Lista';
+    if (!d.ok || !d.instances?.length) { toast('Nenhuma instância encontrada', true); return; }
+    const list = document.getElementById('relay-instance-list');
+    list.style.display = 'block';
+    list.innerHTML = '<p style="font-size:11px;font-weight:700;color:var(--wa-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Selecione uma instância:</p>' +
+      d.instances.map(i => {
+        const stateColor = i.state==='open' ? 'var(--wa-green)' : i.state==='connecting' ? 'var(--yellow)' : 'var(--red)';
+        return `<div onclick="selectInstance(${JSON.stringify(i)})" style="padding:10px 12px;background:#f0f2f5;border-radius:8px;cursor:pointer;margin-bottom:6px;display:flex;align-items:center;gap:10px;transition:background .15s;" onmouseover="this.style.background='#e4e4e4'" onmouseout="this.style.background='#f0f2f5'">
+          <div style="width:10px;height:10px;border-radius:50%;background:${stateColor};flex-shrink:0;"></div>
+          <div style="flex:1;">
+            <strong style="font-size:13px;">${esc(i.name||'—')}</strong>
+            ${i.number ? `<span style="font-size:12px;color:var(--wa-muted);margin-left:8px;">📱 ${esc(i.number)}</span>` : ''}
+          </div>
+          <span style="font-size:11px;color:${stateColor};font-weight:600;">${esc(i.state)}</span>
+        </div>`;
+      }).join('');
+  } catch(e) { btn.disabled=false; toast('Erro ao buscar instâncias', true); }
+}
+
+function selectInstance(inst) {
+  _relaySelectedInst = inst;
+  document.getElementById('relay-selected-name').textContent = `${inst.name}${inst.number ? ' ('+inst.number+')' : ''}`;
+  document.getElementById('relay-form').style.display = 'block';
+  document.getElementById('relay-forward-url').value = '';
+  document.getElementById('relay-instance-list').style.display = 'none';
+}
+
+function cancelRelaySelect() {
+  _relaySelectedInst = null;
+  document.getElementById('relay-form').style.display = 'none';
+  document.getElementById('relay-instance-list').style.display = 'none';
+}
+
+async function activateRelay() {
+  if (!_relaySelectedInst) return toast('Selecione uma instância', true);
+  const forwardUrl = document.getElementById('relay-forward-url').value.trim();
+  const d = await fetch('/api/relay/activate', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ instanceName: _relaySelectedInst.name, forwardUrl })
+  }).then(r=>r.json());
+  if (!d.ok) return toast('Erro: '+(d.error||d.detail), true);
+  toast('✅ Modo Espelho ativado!');
+  if (d.detectedUrl && !forwardUrl) {
+    document.getElementById('relay-active-fwd').textContent = d.detectedUrl;
+  }
+  updateRelayUI(d.relay);
+  _relaySelectedInst = null;
+}
+
+async function reactivateRelay() {
+  const d = await fetch('/api/relay/config').then(r=>r.json());
+  if (!d.relay?.instanceName) return toast('Sem instância configurada', true);
+  const r = await fetch('/api/relay/activate', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ instanceName: d.relay.instanceName, forwardUrl: d.relay.forwardUrl })
+  }).then(r=>r.json());
+  toast(r.ok ? '✅ Webhook reativado!' : '❌ Erro: '+r.error, !r.ok);
+  if (r.ok) updateRelayUI(r.relay);
+}
+
+async function deactivateRelay() {
+  if (!confirm('Desativar modo espelho e restaurar webhook original?')) return;
+  const d = await fetch('/api/relay/deactivate', { method: 'POST' }).then(r=>r.json());
+  toast(d.ok ? 'Modo Espelho desativado' : 'Erro', !d.ok);
+  if (d.ok) updateRelayUI({ enabled: false });
+}
+
 // ── INIT ──
-loadConfig();poll();setInterval(poll,5000);
+loadConfig();
+fetch('/api/relay/config').then(r=>r.json()).then(d=>updateRelayUI(d.relay)).catch(()=>{});
+poll();setInterval(poll,5000);
 </script>
 </body>
 </html>
