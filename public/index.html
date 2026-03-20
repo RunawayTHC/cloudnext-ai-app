@@ -520,6 +520,21 @@
               </div>
             </div>
             <div class="card">
+              <div class="card-label">Pausa por Atendimento Humano</div>
+              <div class="toggle-row" style="margin-bottom:10px;">
+                <div class="toggle-info"><h4>Detectar interação humana</h4><p>IA pausa quando um humano responder pelo WhatsApp ou CloudChat</p></div>
+                <label class="toggle"><input type="checkbox" id="cfg-pause-human"><span class="slider"></span></label>
+              </div>
+              <div id="pause-fields" style="display:none;">
+                <div class="fg" style="margin:0 0 10px;">
+                  <label>Tempo de inatividade (minutos)</label>
+                  <input type="number" id="cfg-pause-timeout" value="30" min="1" max="1440" placeholder="30">
+                  <div class="hint">Após esse tempo sem o humano responder, a IA volta automaticamente com contexto do histórico</div>
+                </div>
+                <div id="paused-contacts-list" style="display:none;margin-top:8px;"></div>
+              </div>
+            </div>
+            <div class="card">
               <div class="card-label">Números Ignorados</div>
               <div class="fg" style="margin:0">
                 <label>Um por linha, sem + (a IA não responde esses números)</label>
@@ -876,6 +891,10 @@ async function loadConfig(){
   if(_cfg.audioScheduleStart) document.getElementById('cfg-schedule-start').value=_cfg.audioScheduleStart;
   if(_cfg.audioScheduleEnd) document.getElementById('cfg-schedule-end').value=_cfg.audioScheduleEnd;
   toggleScheduleFields();
+  const pauseEnabled = !!_cfg.pauseOnHumanEnabled;
+  document.getElementById('cfg-pause-human').checked = pauseEnabled;
+  document.getElementById('pause-fields').style.display = pauseEnabled ? 'block' : 'none';
+  document.getElementById('cfg-pause-timeout').value = _cfg.pauseOnHumanTimeout || 30;
   const sigEnabled = !!_cfg.signatureEnabled;
   document.getElementById('cfg-sig-enabled').checked = sigEnabled;
   document.getElementById('sig-fields').style.display = sigEnabled ? 'block' : 'none';
@@ -893,6 +912,9 @@ async function loadConfig(){
 }
 document.getElementById('cfg-biz-enabled').addEventListener('change', function(){
   document.getElementById('biz-fields').style.display = this.checked ? 'block' : 'none';
+});
+document.getElementById('cfg-pause-human').addEventListener('change', function(){
+  document.getElementById('pause-fields').style.display = this.checked ? 'block' : 'none';
 });
 document.getElementById('cfg-sig-enabled').addEventListener('change', function(){
   document.getElementById('sig-fields').style.display = this.checked ? 'block' : 'none';
@@ -913,6 +935,8 @@ async function saveConfig(){
     signatureEnabled:document.getElementById('cfg-sig-enabled').checked,
     signatureName:document.getElementById('cfg-sig-name').value.trim(),
     signatureRole:document.getElementById('cfg-sig-role').value.trim(),
+    pauseOnHumanEnabled:document.getElementById('cfg-pause-human').checked,
+    pauseOnHumanTimeout:parseInt(document.getElementById('cfg-pause-timeout').value)||30,
     voiceStyle:document.getElementById('cfg-voice-style').value,
     voicePace:document.getElementById('cfg-voice-pace').value,
     businessHoursEnabled:document.getElementById('cfg-biz-enabled').checked,
@@ -1067,6 +1091,27 @@ function handleAIAttach(e) {
   reader.onload = ev => { aiAttachBase64 = ev.target.result.split(',')[1]; };
   reader.readAsDataURL(f);
 }
+async function loadPausedContacts() {
+  if (!document.getElementById('cfg-pause-human').checked) return;
+  const d = await fetch('/api/paused-contacts').then(r=>r.json()).catch(()=>null);
+  const el = document.getElementById('paused-contacts-list');
+  if (!d?.contacts?.length) { el.style.display='none'; return; }
+  el.style.display='block';
+  el.innerHTML = `<div style="font-size:12px;font-weight:600;color:var(--wa-muted);margin-bottom:6px;">CONTATOS COM IA PAUSADA</div>` +
+    d.contacts.map(c => {
+      const min = Math.ceil(c.resumesInMs / 60000);
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#fff3cd;border-radius:6px;margin-bottom:4px;font-size:12px;">
+        <span>📵 ${c.phone} <span style="color:var(--wa-muted);">(retoma em ~${min}min)</span></span>
+        <button onclick="resumeContact('${c.phone}')" style="background:var(--wa-green);color:white;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;">Retomar IA</button>
+      </div>`;
+    }).join('');
+}
+async function resumeContact(phone) {
+  await fetch(`/api/conversations/${phone}/resume`, {method:'POST'});
+  loadPausedContacts();
+}
+setInterval(loadPausedContacts, 15000);
+
 function removeAIAttach() {
   aiAttachFile = null; aiAttachBase64 = null; aiAttachMime = null;
   document.getElementById('ai-attach-preview').style.display = 'none';

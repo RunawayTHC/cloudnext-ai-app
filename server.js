@@ -136,6 +136,8 @@ const state = {
     signatureEnabled: false,
     signatureName: '',
     signatureRole: '',
+    pauseOnHumanEnabled: false,
+    pauseOnHumanTimeout: 30,
     voiceStyle: 'informal',
     voicePace: 'normal',
     businessHoursEnabled: false,
@@ -170,6 +172,8 @@ async function loadConfig() {
   if (map.audioMode)            state.config.audioMode            = map.audioMode;
   if (map.audioScheduleStart)   state.config.audioScheduleStart   = map.audioScheduleStart;
   if (map.audioScheduleEnd)     state.config.audioScheduleEnd     = map.audioScheduleEnd;
+  if (map.pauseOnHumanEnabled !== undefined) state.config.pauseOnHumanEnabled = map.pauseOnHumanEnabled === 'true';
+  if (map.pauseOnHumanTimeout !== undefined) state.config.pauseOnHumanTimeout = parseInt(map.pauseOnHumanTimeout) || 30;
   if (map.signatureEnabled !== undefined) state.config.signatureEnabled = map.signatureEnabled === 'true';
   if (map.signatureName !== undefined)    state.config.signatureName    = map.signatureName;
   if (map.signatureRole !== undefined)    state.config.signatureRole    = map.signatureRole;
@@ -197,6 +201,8 @@ async function saveConfig() {
     ['audioMode',            cfg.audioMode],
     ['audioScheduleStart',   cfg.audioScheduleStart],
     ['audioScheduleEnd',     cfg.audioScheduleEnd],
+    ['pauseOnHumanEnabled',      String(cfg.pauseOnHumanEnabled)],
+    ['pauseOnHumanTimeout',      String(cfg.pauseOnHumanTimeout || 30)],
     ['signatureEnabled',         String(cfg.signatureEnabled)],
     ['signatureName',            cfg.signatureName || ''],
     ['signatureRole',            cfg.signatureRole || ''],
@@ -280,14 +286,35 @@ async function updateWebhook() {
   return r;
 }
 
+// ── HUMAN PAUSE SYSTEM ──
+const humanPaused = new Map();   // phone -> timestamp of last human interaction
+const aiSentIds = new Set();     // message IDs sent by the AI (to distinguish from human sends)
+
+function isHumanPaused(phone) {
+  if (!state.config.pauseOnHumanEnabled) return false;
+  const last = humanPaused.get(phone);
+  if (!last) return false;
+  const ms = (state.config.pauseOnHumanTimeout || 30) * 60 * 1000;
+  if (Date.now() - last >= ms) { humanPaused.delete(phone); return false; }
+  return true;
+}
+
+function resumeContact(phone) {
+  humanPaused.delete(phone);
+}
+
 async function sendText(phone, text) {
-  return evoRequest('POST', `/message/sendText/${activeInstance()}`, { number: phone, text });
+  const r = await evoRequest('POST', `/message/sendText/${activeInstance()}`, { number: phone, text });
+  if (r.ok && r.data?.key?.id) { aiSentIds.add(r.data.key.id); setTimeout(() => aiSentIds.delete(r.data.key.id), 60000); }
+  return r;
 }
 
 async function sendAudio(phone, audioBase64, mimetype = 'audio/mpeg') {
-  return evoRequest('POST', `/message/sendMedia/${activeInstance()}`, {
+  const r = await evoRequest('POST', `/message/sendMedia/${activeInstance()}`, {
     number: phone, mediatype: 'audio', mimetype, media: audioBase64, fileName: 'audio.mp3'
   });
+  if (r.ok && r.data?.key?.id) { aiSentIds.add(r.data.key.id); setTimeout(() => aiSentIds.delete(r.data.key.id), 60000); }
+  return r;
 }
 
 // ── HELPERS ──
@@ -397,6 +424,10 @@ async function processMessage(phone, messageText) {
   if (processingQueue.has(phone)) return;
   if (!state.config.aiEnabled) return;
   if (state.config.restrictAIOutsideHours && !isWithinBusinessHours()) return;
+  if (isHumanPaused(phone)) {
+    await addLog('info', 'system', phone, `IA inativa (atendimento humano ativo)`);
+    return;
+  }
   processingQueue.add(phone);
   await addLog('message', 'in', phone, messageText);
 
@@ -488,15 +519,34 @@ app.post('/webhook', async (req, res) => {
   if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
     const msg = body?.data?.messages?.[0] || body?.data;
     if (!msg) return;
-    if (msg.key?.fromMe || msg.fromMe) return;
+
     const remoteJid = msg.key?.remoteJid || msg.remoteJid;
-    const phone = remoteJid?.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').split(':')[0];
+    const phone = remoteJid?.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').replace(/@lid$/, '').split(':')[0];
     if (!phone || remoteJid?.includes('@g.us')) return;
+
+    const isFromMe = msg.key?.fromMe || msg.fromMe;
+
+    if (isFromMe) {
+      // Detect human agent (not AI) sending a message → pause AI for this contact
+      if (state.config.pauseOnHumanEnabled) {
+        const msgId = msg.key?.id;
+        if (!msgId || !aiSentIds.has(msgId)) {
+          // Human interaction detected
+          humanPaused.set(phone, Date.now());
+          const humanText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+          if (humanText) {
+            const history = await getHistory(phone);
+            await saveHistory(phone, [...history, { role: 'model', text: `[Atendente humano]: ${humanText}` }]);
+          }
+          await addLog('info', 'system', phone, `IA pausada: interação humana detectada. Retoma em ${state.config.pauseOnHumanTimeout}min`);
+        }
+      }
+      return;
+    }
+
     console.log(`[MSG] remoteJid="${remoteJid}" phone="${phone}" ignored=${JSON.stringify(state.config.ignoredNumbers)} blocked=${state.config.ignoredNumbers?.includes(phone)}`);
-    console.log(`[MSG FIELDS] pushName="${msg.pushName}" participant="${msg.key?.participant}" lid="${msg.key?.remoteJid}" verifiedBizName="${msg.verifiedBizName}"`);
-    console.log(`[MSG FULL KEY] ${JSON.stringify(msg.key)}`);
-    if (msg.message?.extendedTextMessage?.contextInfo) console.log(`[MSG CTX] ${JSON.stringify(msg.message.extendedTextMessage.contextInfo)}`);
     if (state.config.ignoredNumbers?.includes(phone)) return;
+
     const messageText =
       msg.message?.conversation ||
       msg.message?.extendedTextMessage?.text ||
@@ -553,7 +603,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
@@ -702,6 +752,26 @@ app.get('/api/elevenlabs/credits', async (req, res) => {
       tier: sub.tier ?? data.tier ?? 'unknown'
     });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// ── HUMAN PAUSE ENDPOINTS ──
+app.get('/api/paused-contacts', (req, res) => {
+  const now = Date.now();
+  const ms = (state.config.pauseOnHumanTimeout || 30) * 60 * 1000;
+  const contacts = [];
+  for (const [phone, ts] of humanPaused.entries()) {
+    const remaining = ms - (now - ts);
+    if (remaining > 0) contacts.push({ phone, pausedAt: ts, resumesInMs: remaining });
+    else humanPaused.delete(phone);
+  }
+  res.json({ ok: true, contacts });
+});
+
+app.post('/api/conversations/:phone/resume', async (req, res) => {
+  const { phone } = req.params;
+  resumeContact(phone);
+  await addLog('info', 'system', phone, 'IA retomada manualmente');
+  res.json({ ok: true });
 });
 
 // ── RELAY ENDPOINTS ──
