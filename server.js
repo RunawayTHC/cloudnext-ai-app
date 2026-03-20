@@ -290,17 +290,29 @@ async function updateWebhook() {
 const lidToPhoneCache = new Map(); // lid_number -> real phone number
 
 async function buildLidMapping() {
-  const r = await evoRequest('GET', `/contacts/getAll/${activeInstance()}`).catch(() => null);
-  if (!r?.ok || !Array.isArray(r.data)) return;
-  let mapped = 0;
-  for (const c of r.data) {
-    if (c.lid) {
-      const lid   = String(c.lid).replace(/@lid$/, '').split(':')[0];
-      const phone = String(c.id  || '').replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').split(':')[0];
-      if (lid && phone && lid !== phone) { lidToPhoneCache.set(lid, phone); mapped++; }
-    }
+  // Try multiple possible Evolution API endpoint variations
+  const endpoints = [
+    `/contacts/getAll/${activeInstance()}`,
+    `/contacts/${activeInstance()}`,
+    `/chat/findContacts/${activeInstance()}`,
+  ];
+  let contacts = [];
+  for (const ep of endpoints) {
+    const r = await evoRequest('GET', ep).catch(() => null);
+    console.log(`[LID MAP TRY] ${ep} → ok=${r?.ok} type=${typeof r?.data} len=${Array.isArray(r?.data)?r.data.length:'?'}`);
+    if (r?.ok && Array.isArray(r.data) && r.data.length > 0) { contacts = r.data; break; }
   }
-  if (mapped) console.log(`[LID MAP] ${mapped} contatos mapeados`);
+  let mapped = 0;
+  for (const c of contacts) {
+    const lidRaw = c.lid || c.lidJid || '';
+    if (!lidRaw) continue;
+    const lid   = String(lidRaw).replace(/@lid$/, '').split(':')[0];
+    const phone = String(c.id || c.remoteJid || '').replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').split(':')[0];
+    if (lid && phone && lid !== phone) { lidToPhoneCache.set(lid, phone); mapped++; }
+  }
+  const msg = `LID map: ${mapped} de ${contacts.length} contatos resolvidos`;
+  console.log(`[LID MAP] ${msg}`);
+  await addLog('info', 'system', null, msg).catch(() => {});
 }
 
 async function resolvePhone(rawPhone, remoteJid) {
