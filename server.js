@@ -341,9 +341,26 @@ function resumeContact(phone) {
   humanPaused.delete(phone);
 }
 
+function captureLidFromSendResponse(sentTo, responseData) {
+  const resolvedJid = responseData?.key?.remoteJid || '';
+  if (resolvedJid.includes('@s.whatsapp.net')) {
+    const resolved = resolvedJid.replace(/@s\.whatsapp\.net$/, '').split(':')[0];
+    const lid = sentTo.replace(/@lid$/, '').split(':')[0];
+    if (lid !== resolved && !lidToPhoneCache.has(lid)) {
+      lidToPhoneCache.set(lid, resolved);
+      console.log(`[LID AUTO] ${lid} → ${resolved}`);
+      addLog('info', 'system', null, `LID mapeado: ${lid} → ${resolved}`).catch(() => {});
+    }
+  }
+}
+
 async function sendText(phone, text) {
   const r = await evoRequest('POST', `/message/sendText/${activeInstance()}`, { number: phone, text });
-  if (r.ok && r.data?.key?.id) { aiSentIds.add(r.data.key.id); setTimeout(() => aiSentIds.delete(r.data.key.id), 60000); }
+  if (r.ok && r.data?.key?.id) {
+    aiSentIds.add(r.data.key.id);
+    setTimeout(() => aiSentIds.delete(r.data.key.id), 60000);
+    captureLidFromSendResponse(phone, r.data);
+  }
   return r;
 }
 
@@ -351,7 +368,11 @@ async function sendAudio(phone, audioBase64, mimetype = 'audio/mpeg') {
   const r = await evoRequest('POST', `/message/sendMedia/${activeInstance()}`, {
     number: phone, mediatype: 'audio', mimetype, media: audioBase64, fileName: 'audio.mp3'
   });
-  if (r.ok && r.data?.key?.id) { aiSentIds.add(r.data.key.id); setTimeout(() => aiSentIds.delete(r.data.key.id), 60000); }
+  if (r.ok && r.data?.key?.id) {
+    aiSentIds.add(r.data.key.id);
+    setTimeout(() => aiSentIds.delete(r.data.key.id), 60000);
+    captureLidFromSendResponse(phone, r.data);
+  }
   return r;
 }
 
