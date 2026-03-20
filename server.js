@@ -59,6 +59,10 @@ async function initDB() {
     );
     ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_ai_at BIGINT;
     ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_user_at BIGINT;
+    CREATE TABLE IF NOT EXISTS human_paused (
+      phone TEXT PRIMARY KEY,
+      paused_at BIGINT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS crm_leads (
       phone TEXT PRIMARY KEY,
       name TEXT DEFAULT '',
@@ -397,6 +401,11 @@ function trackContact(rawPhone, name, rawJid) {
 const humanPaused = new Map();   // phone -> timestamp of last human interaction
 const aiSentIds = new Set();     // message IDs sent by the AI (to distinguish from human sends)
 
+function pauseContact(phone) {
+  humanPaused.set(phone, Date.now());
+  pool.query('INSERT INTO human_paused (phone, paused_at) VALUES ($1,$2) ON CONFLICT (phone) DO UPDATE SET paused_at=$2', [phone, Date.now()]).catch(() => {});
+}
+
 function isHumanPaused(rawPhone, resolvedPhone) {
   if (!state.config.pauseOnHumanEnabled) return false;
   const ms = (state.config.pauseOnHumanTimeout || 30) * 60 * 1000;
@@ -418,7 +427,17 @@ function isHumanPaused(rawPhone, resolvedPhone) {
 }
 
 function resumeContact(phone) {
-  humanPaused.delete(phone);
+  // Clear this phone + all LID-mapped variants
+  const toDelete = new Set([phone]);
+  const mapped = lidToPhoneCache.get(phone);
+  if (mapped) toDelete.add(mapped);
+  for (const [lid, mp] of lidToPhoneCache.entries()) {
+    if (mp === phone) toDelete.add(lid);
+  }
+  for (const p of toDelete) {
+    humanPaused.delete(p);
+    pool.query('DELETE FROM human_paused WHERE phone=$1', [p]).catch(() => {});
+  }
 }
 
 // ── CRM ──
@@ -763,18 +782,18 @@ app.post('/webhook', async (req, res) => {
         const msgId = msg.key?.id;
         if (!msgId || !aiSentIds.has(msgId)) {
           // Human interaction detected
-          humanPaused.set(rawPhone, Date.now());
+          pauseContact(rawPhone);
           // Time-based LID correlation: if human sends to @s.whatsapp.net shortly after a @lid message, map them
           if (!remoteJid?.includes('@lid') && lastLidContact && Date.now() - lastLidContact.timestamp < 300000) {
             if (!lidToPhoneCache.has(lastLidContact.rawPhone)) {
               lidToPhoneCache.set(lastLidContact.rawPhone, rawPhone);
               console.log(`[LID CORR] ${lastLidContact.rawPhone} → ${rawPhone} (time-based)`);
             }
-            humanPaused.set(lastLidContact.rawPhone, Date.now());
+            pauseContact(lastLidContact.rawPhone);
           }
           // Also pause any reverse-mapped lids
           for (const [lid, mp] of lidToPhoneCache.entries()) {
-            if (mp === rawPhone) humanPaused.set(lid, Date.now());
+            if (mp === rawPhone) pauseContact(lid);
           }
           const humanText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
           if (humanText) {
@@ -1140,8 +1159,13 @@ app.get('/api/paused-contacts', (req, res) => {
   const contacts = [];
   for (const [phone, ts] of humanPaused.entries()) {
     const remaining = ms - (now - ts);
-    if (remaining > 0) contacts.push({ phone, pausedAt: ts, resumesInMs: remaining });
-    else humanPaused.delete(phone);
+    if (remaining > 0) {
+      const info = contactsMap.get(phone) || {};
+      contacts.push({ phone, name: info.name || '', pausedAt: ts, resumesInMs: remaining });
+    } else {
+      humanPaused.delete(phone);
+      pool.query('DELETE FROM human_paused WHERE phone=$1', [phone]).catch(() => {});
+    }
   }
   res.json({ ok: true, contacts });
 });
@@ -1231,6 +1255,20 @@ app.listen(PORT, async () => {
   await loadStats();
   await loadRelayConfig();
   console.log('✅ Config, stats e relay carregados do banco');
+
+  // Restore humanPaused from DB
+  try {
+    const { rows: paused } = await pool.query('SELECT phone, paused_at FROM human_paused');
+    const ms = (state.config.pauseOnHumanTimeout || 30) * 60 * 1000;
+    for (const r of paused) {
+      if (Date.now() - Number(r.paused_at) < ms) {
+        humanPaused.set(r.phone, Number(r.paused_at));
+      } else {
+        await pool.query('DELETE FROM human_paused WHERE phone=$1', [r.phone]);
+      }
+    }
+    console.log(`✅ ${humanPaused.size} pausas restauradas do banco`);
+  } catch (e) { console.log('[humanPaused restore]', e.message); }
 
   // Restore in-memory contactsMap from crm_leads (persists across redeploys)
   try {

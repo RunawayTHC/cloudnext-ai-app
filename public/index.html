@@ -910,10 +910,11 @@
         </div>
       </div>
     </div>
-    <div class="modal-foot">
+    <div class="modal-foot" style="flex-wrap:wrap;gap:6px;">
       <button class="btn btn-green" onclick="saveLeadModal()">Salvar</button>
       <button class="btn" style="background:#10b981;color:white;" onclick="setLeadStage('convertido')">✓ Convertido</button>
       <button class="btn btn-red" onclick="setLeadStage('perdido')">✗ Perdido</button>
+      <button class="btn" id="lead-resume-btn" style="background:#3b82f6;color:white;display:none;" onclick="resumeLeadAI()">▶ Retomar IA</button>
       <button class="btn" style="background:#f0f2f5;color:#ef4444;margin-left:auto;" onclick="deleteLead()">🗑 Excluir</button>
     </div>
   </div>
@@ -1181,49 +1182,57 @@ let _noreplySteps = [];
 function toggleNoreplyFields() {
   document.getElementById('noreply-fields').style.display = document.getElementById('cfg-noreply-enabled').checked ? 'block' : 'none';
 }
+function noreplyDisplayValue(delayHours) {
+  if (delayHours < 1) return { val: Math.round(delayHours * 60), unit: 'min' };
+  if (delayHours < 24) return { val: delayHours, unit: 'horas' };
+  return { val: Math.round(delayHours / 24), unit: 'dias' };
+}
+function noreplyToHours(val, unit) {
+  if (unit === 'min')  return val / 60;
+  if (unit === 'horas') return val;
+  return val * 24; // dias
+}
+
 function renderNoreplySteps() {
   const el = document.getElementById('noreply-steps-list');
   if (!el) return;
   if (!_noreplySteps.length) {
-    el.innerHTML = '<div style="font-size:12px;color:var(--wa-muted);text-align:center;padding:8px 0;">Nenhuma tentativa configurada. Clique em "+ Adicionar tentativa".</div>';
+    el.innerHTML = '<div style="font-size:12px;color:var(--wa-muted);text-align:center;padding:8px 0;">Nenhuma tentativa. Clique em "+ Adicionar tentativa".</div>';
     return;
   }
+  const labels = ['1ª','2ª','3ª','4ª','5ª'];
   el.innerHTML = _noreplySteps.map((s, i) => {
-    const days = Math.floor((s.delayHours||0) / 24);
-    const hours = Math.round((s.delayHours||0) % 24);
+    const { val, unit } = noreplyDisplayValue(s.delayHours || 2);
     return `
     <div style="background:#f8f9fa;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;border-left:3px solid var(--wa-green);">
       <div style="display:flex;align-items:center;gap:8px;">
         <div style="width:22px;height:22px;border-radius:50%;background:var(--wa-green);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:white;flex-shrink:0;">${i+1}</div>
-        <span style="font-size:11px;font-weight:700;color:#444;">${i===0?'1ª Tentativa':i===1?'2ª Tentativa':i===2?'3ª Tentativa':(i+1)+'ª Tentativa'}</span>
+        <span style="font-size:11px;font-weight:700;color:#444;">${labels[i]||((i+1)+'ª')} Tentativa</span>
         <button onclick="removeNoreplyStep(${i})" style="margin-left:auto;background:none;border:none;cursor:pointer;color:var(--wa-muted);font-size:14px;padding:0;line-height:1;">✕</button>
       </div>
       <div style="font-size:11px;font-weight:700;color:var(--wa-muted);letter-spacing:.5px;">QUANDO DISPARAR</div>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-        <span style="font-size:12px;color:#555;">Após</span>
-        <input type="number" value="${days}" min="0" step="1" oninput="updateNoreplyDelay(${i},this.value,null)" style="width:52px;padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;text-align:center;">
-        <span style="font-size:12px;color:#555;">dia(s)</span>
-        <input type="number" value="${hours}" min="0" max="23" step="1" oninput="updateNoreplyDelay(${i},null,this.value)" style="width:52px;padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;text-align:center;">
-        <span style="font-size:12px;color:#555;">hora(s) sem resposta</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:12px;color:#555;white-space:nowrap;">Após</span>
+        <input type="number" value="${val}" min="1" step="1" oninput="updateNoreplyDelay(${i},this.value,this.nextElementSibling.value)" style="width:60px;padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:13px;font-weight:600;outline:none;text-align:center;">
+        <select oninput="updateNoreplyDelay(${i},this.previousElementSibling.value,this.value)" style="padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;cursor:pointer;">
+          <option value="min"   ${unit==='min'?'selected':''}>minuto(s)</option>
+          <option value="horas" ${unit==='horas'?'selected':''}>hora(s)</option>
+          <option value="dias"  ${unit==='dias'?'selected':''}>dia(s)</option>
+        </select>
+        <span style="font-size:12px;color:#555;white-space:nowrap;">sem resposta</span>
       </div>
       <div style="font-size:11px;font-weight:700;color:var(--wa-muted);letter-spacing:.5px;">INSTRUÇÃO PARA A IA</div>
       <textarea oninput="_noreplySteps[${i}].instruction=this.value" rows="2" style="width:100%;padding:7px 10px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;font-family:inherit;resize:vertical;" placeholder="ex: Seja gentil e pergunte se ainda tem interesse. Mencione o agendamento se houver.">${s.instruction||''}</textarea>
-      <div style="font-size:11px;color:var(--wa-muted);line-height:1.4;">A IA irá ler o histórico da conversa e criar uma mensagem de reengajamento baseada nessa instrução.</div>
+      <div style="font-size:11px;color:var(--wa-muted);line-height:1.4;">A IA lê o histórico e cria uma mensagem personalizada de reengajamento.</div>
     </div>`;
   }).join('');
 }
-function updateNoreplyDelay(i, daysVal, hoursVal) {
-  const s = _noreplySteps[i];
-  const curDays = Math.floor((s.delayHours||0) / 24);
-  const curHours = Math.round((s.delayHours||0) % 24);
-  const d = daysVal !== null ? +daysVal : curDays;
-  const h = hoursVal !== null ? +hoursVal : curHours;
-  _noreplySteps[i].delayHours = (d * 24) + h;
+function updateNoreplyDelay(i, val, unit) {
+  _noreplySteps[i].delayHours = noreplyToHours(+val, unit);
 }
 function addNoreplyStep() {
-  const defaultDelays = [2, 24, 72];
-  const nextDelay = defaultDelays[_noreplySteps.length] || 48;
-  _noreplySteps.push({ delayHours: nextDelay, instruction: '' });
+  const defaults = [2, 24, 72, 168];
+  _noreplySteps.push({ delayHours: defaults[_noreplySteps.length] || 48, instruction: '' });
   renderNoreplySteps();
 }
 function removeNoreplyStep(i) {
@@ -1231,7 +1240,19 @@ function removeNoreplyStep(i) {
   renderNoreplySteps();
 }
 
-// ── CRM lead delete ──
+// ── CRM lead resume / delete ──
+async function resumeLeadAI() {
+  const phone = document.getElementById('lead-modal-phone').value;
+  await fetch('/api/conversations/' + encodeURIComponent(phone) + '/resume', { method: 'POST' });
+  // Also move stage back to atendimento
+  await fetch('/api/crm/leads/' + encodeURIComponent(phone), {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stage: 'atendimento' })
+  });
+  document.getElementById('lead-modal').classList.remove('open');
+  toast('✅ IA retomada!');
+  loadCRM();
+}
 async function deleteLead() {
   const phone = document.getElementById('lead-modal-phone').value;
   if (!confirm('Excluir este lead e todos seus follow-ups?')) return;
@@ -1560,6 +1581,9 @@ function openLeadModal(phone) {
   document.getElementById('lead-followup-enabled').onchange = function() {
     document.getElementById('lead-followup-config').style.display = this.checked ? 'block' : 'none';
   };
+  // Show "Retomar IA" button if contact is in humano stage or paused
+  const resumeBtn = document.getElementById('lead-resume-btn');
+  resumeBtn.style.display = (lead.stage === 'humano') ? 'inline-flex' : 'none';
   document.getElementById('lead-modal').classList.add('open');
 }
 
