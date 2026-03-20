@@ -420,7 +420,7 @@ async function callElevenLabs(text, voiceId) {
 // ── PROCESS MESSAGE ──
 const processingQueue = new Set();
 
-async function processMessage(phone, messageText) {
+async function processMessage(phone, messageText, sendTarget = null) {
   if (processingQueue.has(phone)) return;
   if (!state.config.aiEnabled) return;
   if (state.config.restrictAIOutsideHours && !isWithinBusinessHours()) return;
@@ -464,16 +464,17 @@ async function processMessage(phone, messageText) {
 
     const isAudio = shouldSendAudio(rawResponse);
 
+    const dest = sendTarget || phone;
     if (isAudio) {
       const audioBase64 = await callElevenLabs(cleanResponse, voiceId);
-      const r = await sendAudio(phone, audioBase64);
+      const r = await sendAudio(dest, audioBase64);
       if (r.ok) {
         state._audioTodayCount++;
         await incStat('audioSent'); await incStat('totalSent');
         await addLog('message', 'out', phone, `[ÁUDIO] ${cleanResponse.slice(0, 80)}`, { format: 'audio' });
       } else throw new Error(`sendAudio failed: ${JSON.stringify(r.data)}`);
     } else {
-      const r = await sendText(phone, cleanResponse);
+      const r = await sendText(dest, cleanResponse);
       if (r.ok) {
         await incStat('textSent'); await incStat('totalSent');
         await addLog('message', 'out', phone, cleanResponse.slice(0, 200), { format: 'text' });
@@ -552,7 +553,9 @@ app.post('/webhook', async (req, res) => {
       msg.message?.extendedTextMessage?.text ||
       msg.message?.imageMessage?.caption ||
       (msg.message?.audioMessage ? '[O cliente enviou um áudio de voz. Responda de forma natural como se tivesse ouvido o áudio, pedindo para ele repetir por texto se necessário.]' : null);
-    if (messageText) processMessage(phone, messageText);
+    // For @lid contacts, pass the original JID as sendTarget so the reply reaches the right device
+    const sendTarget = remoteJid?.includes('@lid') ? remoteJid : null;
+    if (messageText) processMessage(phone, messageText, sendTarget);
   }
 });
 
