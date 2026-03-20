@@ -669,6 +669,11 @@
           <button class="filter-btn" onclick="filterLogs('info',this)">Sistema</button>
           <input type="text" id="log-search" placeholder="Buscar..." style="margin-left:auto;">
         </div>
+        <div style="display:flex;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--wa-border-light);align-items:center;">
+          <span style="font-size:12px;color:var(--wa-muted);white-space:nowrap;">Limpar histórico:</span>
+          <input type="text" id="clear-hist-phone" placeholder="Número (ex: 558181234567)" style="flex:1;font-size:12px;padding:5px 8px;border:1px solid #ddd;border-radius:6px;">
+          <button onclick="clearContactHistory()" class="btn btn-ghost" style="font-size:12px;padding:5px 12px;color:var(--red);border-color:var(--red);">Limpar</button>
+        </div>
         <div class="card" style="padding:10px;">
           <div class="log-list" id="log-list"><div class="log-empty">Carregando...</div></div>
         </div>
@@ -1091,6 +1096,15 @@ function handleAIAttach(e) {
   reader.onload = ev => { aiAttachBase64 = ev.target.result.split(',')[1]; };
   reader.readAsDataURL(f);
 }
+async function clearContactHistory() {
+  const phone = document.getElementById('clear-hist-phone').value.trim().replace(/\D/g,'');
+  if (!phone) return alert('Digite o número do contato.');
+  if (!confirm(`Limpar histórico de ${phone}? A IA vai perder o contexto da conversa.`)) return;
+  const r = await fetch(`/api/conversations/${phone}`, {method:'DELETE'}).then(d=>d.json()).catch(()=>null);
+  if (r?.ok) { document.getElementById('clear-hist-phone').value=''; alert('Histórico apagado!'); }
+  else alert('Erro ao apagar. Verifique o número.');
+}
+
 async function loadPausedContacts() {
   if (!document.getElementById('cfg-pause-human').checked) return;
   const d = await fetch('/api/paused-contacts').then(r=>r.json()).catch(()=>null);
