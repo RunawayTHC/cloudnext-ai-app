@@ -1264,7 +1264,6 @@ app.listen(PORT, async () => {
           const lastUserAt = Number(conv.last_user_at) || 0;
           if (lastAiAt <= lastUserAt) continue; // client already replied
           const contact = contactsMap.get(conv.phone);
-          const sendTarget = contact?.rawJid?.includes('@lid') ? contact.rawJid : null;
           for (let si = 0; si < state.config.noreplyFollowupSteps.length; si++) {
             const step = state.config.noreplyFollowupSteps[si];
             const threshold = (step.delayHours || 1) * 3600000;
@@ -1274,8 +1273,36 @@ app.listen(PORT, async () => {
               [conv.phone, `noreply_${si}`, lastAiAt]
             );
             if (already.length) continue;
-            const msg = (step.message || '').replace(/\{nome\}/gi, contact?.name || '');
-            await sendText(sendTarget || conv.phone, msg);
+            // Generate message via Gemini based on conversation summary + instruction
+            let msg = '';
+            try {
+              const crmRow = await pool.query('SELECT summary FROM crm_leads WHERE phone=$1', [conv.phone]);
+              const summary = crmRow.rows[0]?.summary || '';
+              const instruction = step.instruction || 'Seja gentil e pergunte se ainda tem interesse.';
+              const clientName = contact?.name || '';
+              const persona = state.config.persona || '';
+              const prompt = `Você é um assistente de atendimento. Com base no resumo da conversa abaixo, escreva uma mensagem curta de reengajamento para o cliente que não respondeu.
+
+Resumo da conversa: ${summary || 'Sem resumo disponível.'}
+Nome do cliente: ${clientName || 'Cliente'}
+Instrução: ${instruction}
+Persona: ${persona.slice(0, 300)}
+
+Escreva APENAS a mensagem final para o WhatsApp. Sem explicações. Use linguagem natural, no estilo WhatsApp. Não use ** para negrito.`;
+              const r = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }) }
+              );
+              if (r.ok) {
+                const d = await r.json();
+                msg = d.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+                msg = msg.replace(/\*\*(.+?)\*\*/gs, '*$1*');
+              }
+            } catch (e) { console.log('[NOREPLY GEN]', e.message); }
+            if (!msg) continue; // skip if AI failed to generate
+            const dest = contact?.rawJid?.includes('@lid') ? contact.rawJid : conv.phone;
+            await sendText(dest, msg);
             await pool.query(
               'INSERT INTO crm_followups (id, phone, scheduled_at, message, type, sent, created_at) VALUES ($1,$2,$3,$4,$5,true,$6)',
               [uuidv4(), conv.phone, now, msg, `noreply_${si}`, now]

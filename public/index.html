@@ -707,8 +707,7 @@
               </div>
               <div id="noreply-fields" style="display:none;">
                 <div id="noreply-steps-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
-                <button class="btn btn-ghost" onclick="addNoreplyStep()" style="width:100%;font-size:12px;">+ Adicionar etapa</button>
-                <div class="hint" style="margin-top:6px;">Use {nome} para inserir o nome do cliente na mensagem.</div>
+                <button class="btn btn-ghost" onclick="addNoreplyStep()" style="width:100%;font-size:12px;">+ Adicionar tentativa</button>
               </div>
             </div>
             <div class="card">
@@ -1185,22 +1184,46 @@ function toggleNoreplyFields() {
 function renderNoreplySteps() {
   const el = document.getElementById('noreply-steps-list');
   if (!el) return;
-  el.innerHTML = _noreplySteps.map((s, i) => `
-    <div style="background:#f8f9fa;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;">
+  if (!_noreplySteps.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--wa-muted);text-align:center;padding:8px 0;">Nenhuma tentativa configurada. Clique em "+ Adicionar tentativa".</div>';
+    return;
+  }
+  el.innerHTML = _noreplySteps.map((s, i) => {
+    const days = Math.floor((s.delayHours||0) / 24);
+    const hours = Math.round((s.delayHours||0) % 24);
+    return `
+    <div style="background:#f8f9fa;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;border-left:3px solid var(--wa-green);">
       <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:11px;font-weight:700;color:var(--wa-muted);">ETAPA ${i+1}</span>
-        <button onclick="removeNoreplyStep(${i})" style="margin-left:auto;background:none;border:none;cursor:pointer;color:var(--wa-muted);font-size:14px;padding:0;">✕</button>
+        <div style="width:22px;height:22px;border-radius:50%;background:var(--wa-green);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:white;flex-shrink:0;">${i+1}</div>
+        <span style="font-size:11px;font-weight:700;color:#444;">${i===0?'1ª Tentativa':i===1?'2ª Tentativa':i===2?'3ª Tentativa':(i+1)+'ª Tentativa'}</span>
+        <button onclick="removeNoreplyStep(${i})" style="margin-left:auto;background:none;border:none;cursor:pointer;color:var(--wa-muted);font-size:14px;padding:0;line-height:1;">✕</button>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <input type="number" value="${s.delayHours}" min="0.5" step="0.5" onchange="_noreplySteps[${i}].delayHours=+this.value" style="width:65px;padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;">
-        <span style="font-size:12px;color:#555;">horas sem resposta</span>
+      <div style="font-size:11px;font-weight:700;color:var(--wa-muted);letter-spacing:.5px;">QUANDO DISPARAR</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:#555;">Após</span>
+        <input type="number" value="${days}" min="0" step="1" oninput="updateNoreplyDelay(${i},this.value,null)" style="width:52px;padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;text-align:center;">
+        <span style="font-size:12px;color:#555;">dia(s)</span>
+        <input type="number" value="${hours}" min="0" max="23" step="1" oninput="updateNoreplyDelay(${i},null,this.value)" style="width:52px;padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;text-align:center;">
+        <span style="font-size:12px;color:#555;">hora(s) sem resposta</span>
       </div>
-      <textarea onchange="_noreplySteps[${i}].message=this.value" rows="2" style="width:100%;padding:7px 10px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;font-family:inherit;resize:vertical;">${s.message||''}</textarea>
-    </div>
-  `).join('');
+      <div style="font-size:11px;font-weight:700;color:var(--wa-muted);letter-spacing:.5px;">INSTRUÇÃO PARA A IA</div>
+      <textarea oninput="_noreplySteps[${i}].instruction=this.value" rows="2" style="width:100%;padding:7px 10px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;font-family:inherit;resize:vertical;" placeholder="ex: Seja gentil e pergunte se ainda tem interesse. Mencione o agendamento se houver.">${s.instruction||''}</textarea>
+      <div style="font-size:11px;color:var(--wa-muted);line-height:1.4;">A IA irá ler o histórico da conversa e criar uma mensagem de reengajamento baseada nessa instrução.</div>
+    </div>`;
+  }).join('');
+}
+function updateNoreplyDelay(i, daysVal, hoursVal) {
+  const s = _noreplySteps[i];
+  const curDays = Math.floor((s.delayHours||0) / 24);
+  const curHours = Math.round((s.delayHours||0) % 24);
+  const d = daysVal !== null ? +daysVal : curDays;
+  const h = hoursVal !== null ? +hoursVal : curHours;
+  _noreplySteps[i].delayHours = (d * 24) + h;
 }
 function addNoreplyStep() {
-  _noreplySteps.push({ delayHours: 2, message: '' });
+  const defaultDelays = [2, 24, 72];
+  const nextDelay = defaultDelays[_noreplySteps.length] || 48;
+  _noreplySteps.push({ delayHours: nextDelay, instruction: '' });
   renderNoreplySteps();
 }
 function removeNoreplyStep(i) {
