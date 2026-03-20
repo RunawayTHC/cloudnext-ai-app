@@ -492,7 +492,10 @@ app.post('/webhook', async (req, res) => {
     const remoteJid = msg.key?.remoteJid || msg.remoteJid;
     const phone = remoteJid?.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').split(':')[0];
     if (!phone || remoteJid?.includes('@g.us')) return;
-    console.log(`[MSG] phone="${phone}" ignored=${JSON.stringify(state.config.ignoredNumbers)} blocked=${state.config.ignoredNumbers?.includes(phone)}`);
+    console.log(`[MSG] remoteJid="${remoteJid}" phone="${phone}" ignored=${JSON.stringify(state.config.ignoredNumbers)} blocked=${state.config.ignoredNumbers?.includes(phone)}`);
+    console.log(`[MSG FIELDS] pushName="${msg.pushName}" participant="${msg.key?.participant}" lid="${msg.key?.remoteJid}" verifiedBizName="${msg.verifiedBizName}"`);
+    console.log(`[MSG FULL KEY] ${JSON.stringify(msg.key)}`);
+    if (msg.message?.extendedTextMessage?.contextInfo) console.log(`[MSG CTX] ${JSON.stringify(msg.message.extendedTextMessage.contextInfo)}`);
     if (state.config.ignoredNumbers?.includes(phone)) return;
     const messageText =
       msg.message?.conversation ||
