@@ -136,6 +136,13 @@ const state = {
     signatureEnabled: false,
     signatureName: '',
     signatureRole: '',
+    voiceStyle: 'informal',
+    voicePace: 'normal',
+    businessHoursEnabled: false,
+    businessHoursStart: '08:00',
+    businessHoursEnd: '18:00',
+    businessHoursMsg: 'Nosso horário de atendimento é de segunda a sexta, das 8h às 18h. Em breve um atendente irá te chamar!',
+    restrictAIOutsideHours: false,
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
@@ -166,6 +173,13 @@ async function loadConfig() {
   if (map.signatureEnabled !== undefined) state.config.signatureEnabled = map.signatureEnabled === 'true';
   if (map.signatureName !== undefined)    state.config.signatureName    = map.signatureName;
   if (map.signatureRole !== undefined)    state.config.signatureRole    = map.signatureRole;
+  if (map.voiceStyle)                     state.config.voiceStyle        = map.voiceStyle;
+  if (map.voicePace)                      state.config.voicePace         = map.voicePace;
+  if (map.businessHoursEnabled !== undefined) state.config.businessHoursEnabled = map.businessHoursEnabled === 'true';
+  if (map.businessHoursStart)             state.config.businessHoursStart = map.businessHoursStart;
+  if (map.businessHoursEnd)               state.config.businessHoursEnd   = map.businessHoursEnd;
+  if (map.businessHoursMsg)               state.config.businessHoursMsg   = map.businessHoursMsg;
+  if (map.restrictAIOutsideHours !== undefined) state.config.restrictAIOutsideHours = map.restrictAIOutsideHours === 'true';
 }
 
 async function saveConfig() {
@@ -183,9 +197,16 @@ async function saveConfig() {
     ['audioMode',            cfg.audioMode],
     ['audioScheduleStart',   cfg.audioScheduleStart],
     ['audioScheduleEnd',     cfg.audioScheduleEnd],
-    ['signatureEnabled',     String(cfg.signatureEnabled)],
-    ['signatureName',        cfg.signatureName || ''],
-    ['signatureRole',        cfg.signatureRole || ''],
+    ['signatureEnabled',         String(cfg.signatureEnabled)],
+    ['signatureName',            cfg.signatureName || ''],
+    ['signatureRole',            cfg.signatureRole || ''],
+    ['voiceStyle',               cfg.voiceStyle || 'informal'],
+    ['voicePace',                cfg.voicePace || 'normal'],
+    ['businessHoursEnabled',     String(cfg.businessHoursEnabled)],
+    ['businessHoursStart',       cfg.businessHoursStart || '08:00'],
+    ['businessHoursEnd',         cfg.businessHoursEnd || '18:00'],
+    ['businessHoursMsg',         cfg.businessHoursMsg || ''],
+    ['restrictAIOutsideHours',   String(cfg.restrictAIOutsideHours)],
   ];
   for (const [key, value] of entries) {
     await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
@@ -301,13 +322,31 @@ function shouldSendAudio(rawResponse) {
   return rawResponse.startsWith('[AUDIO]');
 }
 
+function isWithinBusinessHours() {
+  const { businessHoursEnabled, businessHoursStart, businessHoursEnd } = state.config;
+  if (!businessHoursEnabled) return true;
+  const t = getBrazilTimeStr();
+  return t >= businessHoursStart && t <= businessHoursEnd;
+}
+
 // ── GEMINI ──
 async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', history = []) {
   const audioInstruction = state.config.audioRoutingEnabled && ELEVENLABS_KEY && state.config.voiceId
     ? `\n\nINSTRUÇÃO DE FORMATO: Inicie SEMPRE cada resposta com [AUDIO] ou [TEXTO].\n- Use [AUDIO] para: saudações, warmup, follow-up pessoal, mensagens curtas.\n- Use [TEXTO] para: preços, links, dados técnicos, listas.\nNUNCA omita esse prefixo.`
     : '';
 
-  const formatInstruction = `\n\nINSTRUÇÃO DE FORMATAÇÃO WHATSAPP: NUNCA use ** (dois asteriscos) para negrito. No WhatsApp, negrito se faz com *um asterisco* de cada lado. Evite formatação markdown desnecessária.`;
+  const formatInstruction = `\n\nINSTRUÇÃO DE FORMATAÇÃO WHATSAPP: NUNCA use ** (dois asteriscos) para negrito. No WhatsApp, negrito se faz com *um asterisco* de cada lado. Evite formatação markdown desnecessária. NUNCA inclua seu nome, cargo ou assinatura no corpo da mensagem — isso é adicionado automaticamente pelo sistema.`;
+
+  const styleLabels = { formal: 'formal e profissional', informal: 'informal e amigável', casual: 'descontraída e casual' };
+  const paceLabels  = { slow: 'pausada e calma, com frases mais curtas', normal: 'natural', fast: 'dinâmica e direta' };
+  const styleInstruction = `\n\nESTILO DE COMUNICAÇÃO: Use linguagem ${styleLabels[state.config.voiceStyle] || 'amigável'}, com ritmo ${paceLabels[state.config.voicePace] || 'natural'}.`;
+
+  const withinHours = isWithinBusinessHours();
+  const hoursInstruction = state.config.businessHoursEnabled
+    ? (withinHours
+      ? `\n\nHORÁRIO DE ATENDIMENTO: ${state.config.businessHoursStart}–${state.config.businessHoursEnd}. Se o cliente pedir para falar com um humano, informe que em breve um atendente irá atendê-lo.`
+      : `\n\nATENÇÃO: Estamos FORA do horário de atendimento (${state.config.businessHoursStart}–${state.config.businessHoursEnd}). Se o cliente pedir atendente humano, informe gentilmente: "${state.config.businessHoursMsg}"`)
+    : '';
 
   const timeCtx = `\n\n[HORA ATUAL EM BRASÍLIA: ${brazilNow()}]`;
 
@@ -322,7 +361,7 @@ async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', hist
     {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: persona + timeCtx + audioInstruction + formatInstruction }] },
+        system_instruction: { parts: [{ text: persona + timeCtx + audioInstruction + formatInstruction + styleInstruction + hoursInstruction }] },
         contents
       })
     }
@@ -334,10 +373,18 @@ async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', hist
 
 // ── ELEVENLABS ──
 async function callElevenLabs(text, voiceId) {
+  const stylePresets = {
+    formal:   { stability: 0.70, similarity_boost: 0.80, style: 0.00 },
+    informal: { stability: 0.50, similarity_boost: 0.75, style: 0.30 },
+    casual:   { stability: 0.40, similarity_boost: 0.70, style: 0.50 },
+  };
+  const paceMap = { slow: 0.80, normal: 1.00, fast: 1.20 };
+  const voice_settings = stylePresets[state.config.voiceStyle] || stylePresets.informal;
+  const speed = paceMap[state.config.voicePace] || 1.00;
   const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
     method: 'POST',
     headers: { 'xi-api-key': ELEVENLABS_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.5, similarity_boost: 0.75 } })
+    body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', voice_settings, speed })
   });
   if (!res.ok) throw new Error(`ElevenLabs error: ${res.status}`);
   return Buffer.from(await res.arrayBuffer()).toString('base64');
@@ -349,6 +396,7 @@ const processingQueue = new Set();
 async function processMessage(phone, messageText) {
   if (processingQueue.has(phone)) return;
   if (!state.config.aiEnabled) return;
+  if (state.config.restrictAIOutsideHours && !isWithinBusinessHours()) return;
   processingQueue.add(phone);
   await addLog('message', 'in', phone, messageText);
 
@@ -368,11 +416,11 @@ async function processMessage(phone, messageText) {
     // Fix WhatsApp formatting: replace **text** with *text*
     cleanResponse = cleanResponse.replace(/\*\*(.+?)\*\*/gs, '*$1*');
 
-    // Append signature if enabled
+    // Prepend signature if enabled
     const { signatureEnabled, signatureName, signatureRole } = state.config;
     if (signatureEnabled && signatureName) {
-      const sig = signatureRole ? `*${signatureName}* - ${signatureRole}` : `*${signatureName}*`;
-      cleanResponse = `${cleanResponse}\n\n${sig}`;
+      const sig = signatureRole ? `*${signatureName}* - ${signatureRole}:` : `*${signatureName}*:`;
+      cleanResponse = `${sig}\n\n${cleanResponse}`;
     }
 
     // Save updated history
@@ -441,7 +489,7 @@ app.post('/webhook', async (req, res) => {
     if (!msg) return;
     if (msg.key?.fromMe || msg.fromMe) return;
     const remoteJid = msg.key?.remoteJid || msg.remoteJid;
-    const phone = remoteJid?.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    const phone = remoteJid?.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').split(':')[0];
     if (!phone || remoteJid?.includes('@g.us')) return;
     if (state.config.ignoredNumbers?.includes(phone)) return;
     const messageText =
@@ -500,7 +548,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');

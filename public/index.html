@@ -564,6 +564,53 @@
                 <label>Limite de Áudios/Dia (0=ilimitado)</label>
                 <input type="number" id="cfg-audio-limit" value="0" min="0" placeholder="0">
               </div>
+              <div style="border-top:1px solid var(--border);margin:14px 0 10px;"></div>
+              <div class="card-label" style="margin-bottom:10px;">Linguagem da Voz</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="fg" style="margin:0;">
+                  <label>Estilo</label>
+                  <select id="cfg-voice-style">
+                    <option value="informal">Informal e amigável</option>
+                    <option value="formal">Formal e profissional</option>
+                    <option value="casual">Descontraído e casual</option>
+                  </select>
+                </div>
+                <div class="fg" style="margin:0;">
+                  <label>Ritmo de Fala</label>
+                  <select id="cfg-voice-pace">
+                    <option value="normal">Normal</option>
+                    <option value="slow">Pausado e calmo</option>
+                    <option value="fast">Dinâmico e rápido</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-label">Horário de Atendimento</div>
+              <div class="toggle-row" style="margin-bottom:10px;">
+                <div class="toggle-info"><h4>Ativar horário</h4><p>IA informa horário quando cliente pede humano</p></div>
+                <label class="toggle"><input type="checkbox" id="cfg-biz-enabled"><span class="slider"></span></label>
+              </div>
+              <div id="biz-fields" style="display:none;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                  <div class="fg" style="margin:0;">
+                    <label>Início</label>
+                    <input type="time" id="cfg-biz-start" value="08:00">
+                  </div>
+                  <div class="fg" style="margin:0;">
+                    <label>Fim</label>
+                    <input type="time" id="cfg-biz-end" value="18:00">
+                  </div>
+                </div>
+                <div class="fg">
+                  <label>Mensagem fora do horário</label>
+                  <textarea id="cfg-biz-msg" rows="2" placeholder="Nosso horário de atendimento é de segunda a sexta, das 8h às 18h."></textarea>
+                </div>
+                <div class="toggle-row" style="margin-top:10px;">
+                  <div class="toggle-info"><h4>Silenciar IA fora do horário</h4><p>A IA não responde fora do horário configurado</p></div>
+                  <label class="toggle"><input type="checkbox" id="cfg-restrict-hours"><span class="slider"></span></label>
+                </div>
+              </div>
             </div>
             <div class="card">
               <div class="card-label">Créditos ElevenLabs</div>
@@ -834,7 +881,19 @@ async function loadConfig(){
   document.getElementById('sig-fields').style.display = sigEnabled ? 'block' : 'none';
   document.getElementById('cfg-sig-name').value = _cfg.signatureName || '';
   document.getElementById('cfg-sig-role').value = _cfg.signatureRole || '';
+  if(_cfg.voiceStyle) document.getElementById('cfg-voice-style').value=_cfg.voiceStyle;
+  if(_cfg.voicePace)  document.getElementById('cfg-voice-pace').value=_cfg.voicePace;
+  const bizEnabled = !!_cfg.businessHoursEnabled;
+  document.getElementById('cfg-biz-enabled').checked = bizEnabled;
+  document.getElementById('biz-fields').style.display = bizEnabled ? 'block' : 'none';
+  if(_cfg.businessHoursStart) document.getElementById('cfg-biz-start').value=_cfg.businessHoursStart;
+  if(_cfg.businessHoursEnd)   document.getElementById('cfg-biz-end').value=_cfg.businessHoursEnd;
+  document.getElementById('cfg-biz-msg').value=_cfg.businessHoursMsg||'';
+  document.getElementById('cfg-restrict-hours').checked=!!_cfg.restrictAIOutsideHours;
 }
+document.getElementById('cfg-biz-enabled').addEventListener('change', function(){
+  document.getElementById('biz-fields').style.display = this.checked ? 'block' : 'none';
+});
 document.getElementById('cfg-sig-enabled').addEventListener('change', function(){
   document.getElementById('sig-fields').style.display = this.checked ? 'block' : 'none';
 });
@@ -854,6 +913,13 @@ async function saveConfig(){
     signatureEnabled:document.getElementById('cfg-sig-enabled').checked,
     signatureName:document.getElementById('cfg-sig-name').value.trim(),
     signatureRole:document.getElementById('cfg-sig-role').value.trim(),
+    voiceStyle:document.getElementById('cfg-voice-style').value,
+    voicePace:document.getElementById('cfg-voice-pace').value,
+    businessHoursEnabled:document.getElementById('cfg-biz-enabled').checked,
+    businessHoursStart:document.getElementById('cfg-biz-start').value,
+    businessHoursEnd:document.getElementById('cfg-biz-end').value,
+    businessHoursMsg:document.getElementById('cfg-biz-msg').value.trim(),
+    restrictAIOutsideHours:document.getElementById('cfg-restrict-hours').checked,
   };
   const d=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   toast(d.ok?'✅ Salvo!':'❌ Erro ao salvar',!d.ok);
