@@ -328,15 +328,26 @@ async function resolvePhone(rawPhone, remoteJid) {
 const contactsMap = new Map(); // rawPhone → {name, rawJid, firstSeen, lastSeen}
 let lastLidContact = null; // {rawPhone, timestamp} for time-based LID correlation
 
+async function fetchProfilePic(rawJid) {
+  const r = await evoRequest('GET', `/chat/getProfilePictureUrl/${activeInstance()}?number=${encodeURIComponent(rawJid)}`).catch(() => null);
+  return r?.data?.profilePictureUrl || r?.data?.url || null;
+}
+
 function trackContact(rawPhone, name, rawJid) {
   const ex = contactsMap.get(rawPhone) || {};
   contactsMap.set(rawPhone, {
     name: name || ex.name || '',
     rawJid,
+    profilePic: ex.profilePic || null,
     firstSeen: ex.firstSeen || Date.now(),
     lastSeen: Date.now()
   });
   if (rawJid?.includes('@lid')) lastLidContact = { rawPhone, timestamp: Date.now() };
+  if (!ex.profilePic) {
+    fetchProfilePic(rawJid).then(url => {
+      if (url) { const c = contactsMap.get(rawPhone); if (c) c.profilePic = url; }
+    }).catch(() => {});
+  }
 }
 
 // ── HUMAN PAUSE SYSTEM ──
@@ -866,6 +877,7 @@ app.get('/api/contacts', (req, res) => {
       id,
       name: info.name,
       rawJid: info.rawJid,
+      profilePic: info.profilePic || null,
       lastSeen: info.lastSeen,
       blocked: !!(state.config.ignoredNumbers?.includes(id))
     });

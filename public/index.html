@@ -1133,37 +1133,64 @@ async function resumeContact(phone) {
 setInterval(loadPausedContacts, 15000);
 setInterval(loadContacts, 30000);
 
+let _contactsAll = [], _contactsPage = 1;
+const CONTACTS_PER_PAGE = 10;
+
 async function loadContacts() {
   const d = await fetch('/api/contacts').then(r=>r.json()).catch(()=>null);
+  _contactsAll = d?.contacts || [];
+  renderContactsPage();
+}
+
+function renderContactsPage() {
   const el = document.getElementById('contacts-list');
-  if (!d?.contacts?.length) {
+  if (!_contactsAll.length) {
     el.innerHTML = '<div style="font-size:12px;color:var(--wa-muted);padding:8px 0;">Nenhum contato ainda. Aguardando mensagens...</div>';
     return;
   }
-  el.innerHTML = d.contacts.map(c => {
+  const total = _contactsAll.length;
+  const totalPages = Math.ceil(total / CONTACTS_PER_PAGE);
+  if (_contactsPage > totalPages) _contactsPage = totalPages;
+  const start = (_contactsPage - 1) * CONTACTS_PER_PAGE;
+  const page = _contactsAll.slice(start, start + CONTACTS_PER_PAGE);
+
+  const rows = page.map(c => {
     const initial = (c.name || c.id).charAt(0).toUpperCase();
-    const label = c.name ? `${c.name} <span style="color:var(--wa-muted);font-size:11px;">(${c.id})</span>` : `<span style="font-family:monospace">${c.id}</span>`;
+    const avatar = c.profilePic
+      ? `<img src="${c.profilePic}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none';this.nextSibling.style.display='flex';">
+         <div style="display:none;width:32px;height:32px;border-radius:50%;background:var(--wa-green);align-items:center;justify-content:center;font-size:13px;font-weight:600;color:white;flex-shrink:0;">${initial}</div>`
+      : `<div style="width:32px;height:32px;border-radius:50%;background:var(--wa-green);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:white;flex-shrink:0;">${initial}</div>`;
+    const label = c.name
+      ? `<span style="font-size:12px;font-weight:500;">${c.name}</span><br><span style="color:var(--wa-muted);font-size:10px;font-family:monospace;">${c.id}</span>`
+      : `<span style="font-size:12px;font-family:monospace;">${c.id}</span>`;
     const btnStyle = c.blocked
-      ? 'background:#ef4444;color:white;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;'
-      : 'background:#e9edef;color:#111b21;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;';
-    const btnText = c.blocked ? 'Bloqueado' : 'Bloquear';
-    const btnClick = c.blocked
-      ? `unblockContact('${c.id}')`
-      : `blockContact('${c.id}')`;
-    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0f2f5;">
-      <div style="width:28px;height:28px;border-radius:50%;background:var(--wa-green);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:white;flex-shrink:0;">${initial}</div>
-      <div style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
-      <button onclick="${btnClick}" style="${btnStyle}">${btnText}</button>
+      ? 'background:#ef4444;color:white;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap;'
+      : 'background:#e9edef;color:#111b21;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap;';
+    const escapedId = c.id.replace(/'/g, "\\'");
+    const btnClick = c.blocked ? `unblockContact('${escapedId}')` : `blockContact('${escapedId}')`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f0f2f5;">
+      <div style="display:flex;flex-shrink:0;">${avatar}</div>
+      <div style="flex:1;overflow:hidden;line-height:1.3;">${label}</div>
+      <button onclick="${btnClick}" style="${btnStyle}">${c.blocked ? 'Bloqueado' : 'Bloquear'}</button>
     </div>`;
   }).join('');
+
+  const pagination = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 0 0;font-size:12px;color:var(--wa-muted);">
+      <button onclick="_contactsPage--;renderContactsPage();" ${_contactsPage<=1?'disabled':''} style="background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;">‹</button>
+      <span>Pág. ${_contactsPage} de ${totalPages} &nbsp;(${total} contatos)</span>
+      <button onclick="_contactsPage++;renderContactsPage();" ${_contactsPage>=totalPages?'disabled':''} style="background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;">›</button>
+    </div>` : `<div style="font-size:11px;color:var(--wa-muted);text-align:right;padding-top:4px;">${total} contato${total!==1?'s':''}</div>`;
+
+  el.innerHTML = rows + pagination;
 }
 
 async function blockContact(id) {
-  await fetch(`/api/contacts/${encodeURIComponent(id)}/block`, {method:'POST'});
+  await fetch('/api/contacts/' + encodeURIComponent(id) + '/block', {method:'POST'});
   loadContacts();
 }
 async function unblockContact(id) {
-  await fetch(`/api/contacts/${encodeURIComponent(id)}/block`, {method:'DELETE'});
+  await fetch('/api/contacts/' + encodeURIComponent(id) + '/block', {method:'DELETE'});
   loadContacts();
 }
 
