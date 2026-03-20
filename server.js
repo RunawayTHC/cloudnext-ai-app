@@ -133,6 +133,9 @@ const state = {
     audioMode: 'ai',
     audioScheduleStart: '08:00',
     audioScheduleEnd: '18:00',
+    signatureEnabled: false,
+    signatureName: '',
+    signatureRole: '',
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
@@ -160,6 +163,9 @@ async function loadConfig() {
   if (map.audioMode)            state.config.audioMode            = map.audioMode;
   if (map.audioScheduleStart)   state.config.audioScheduleStart   = map.audioScheduleStart;
   if (map.audioScheduleEnd)     state.config.audioScheduleEnd     = map.audioScheduleEnd;
+  if (map.signatureEnabled !== undefined) state.config.signatureEnabled = map.signatureEnabled === 'true';
+  if (map.signatureName !== undefined)    state.config.signatureName    = map.signatureName;
+  if (map.signatureRole !== undefined)    state.config.signatureRole    = map.signatureRole;
 }
 
 async function saveConfig() {
@@ -177,6 +183,9 @@ async function saveConfig() {
     ['audioMode',            cfg.audioMode],
     ['audioScheduleStart',   cfg.audioScheduleStart],
     ['audioScheduleEnd',     cfg.audioScheduleEnd],
+    ['signatureEnabled',     String(cfg.signatureEnabled)],
+    ['signatureName',        cfg.signatureName || ''],
+    ['signatureRole',        cfg.signatureRole || ''],
   ];
   for (const [key, value] of entries) {
     await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
@@ -298,6 +307,8 @@ async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', hist
     ? `\n\nINSTRUÇÃO DE FORMATO: Inicie SEMPRE cada resposta com [AUDIO] ou [TEXTO].\n- Use [AUDIO] para: saudações, warmup, follow-up pessoal, mensagens curtas.\n- Use [TEXTO] para: preços, links, dados técnicos, listas.\nNUNCA omita esse prefixo.`
     : '';
 
+  const formatInstruction = `\n\nINSTRUÇÃO DE FORMATAÇÃO WHATSAPP: NUNCA use ** (dois asteriscos) para negrito. No WhatsApp, negrito se faz com *um asterisco* de cada lado. Evite formatação markdown desnecessária.`;
+
   const timeCtx = `\n\n[HORA ATUAL EM BRASÍLIA: ${brazilNow()}]`;
 
   // Build multi-turn contents from history + current message
@@ -311,7 +322,7 @@ async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', hist
     {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: persona + timeCtx + audioInstruction }] },
+        system_instruction: { parts: [{ text: persona + timeCtx + audioInstruction + formatInstruction }] },
         contents
       })
     }
@@ -352,7 +363,17 @@ async function processMessage(phone, messageText) {
     const rawResponse = await callGemini(messageText, persona, geminiModel, history);
     await addLog('ai', 'system', phone, `Gemini: ${rawResponse.slice(0, 120)}`);
 
-    const cleanResponse = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
+    let cleanResponse = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
+
+    // Fix WhatsApp formatting: replace **text** with *text*
+    cleanResponse = cleanResponse.replace(/\*\*(.+?)\*\*/gs, '*$1*');
+
+    // Append signature if enabled
+    const { signatureEnabled, signatureName, signatureRole } = state.config;
+    if (signatureEnabled && signatureName) {
+      const sig = signatureRole ? `*${signatureName}* - ${signatureRole}` : `*${signatureName}*`;
+      cleanResponse = `${cleanResponse}\n\n${sig}`;
+    }
 
     // Save updated history
     await saveHistory(phone, [
@@ -479,7 +500,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
@@ -548,10 +569,13 @@ Prompt de sistema atualizado com tudo coletado até agora. Escreva como um promp
 Nunca omita essas tags.`;
 
   try {
-    const contents = messages.map(m => ({
-      role: m.role === 'ai' ? 'model' : 'user',
-      parts: [{ text: m.text }]
-    }));
+    const contents = messages.map(m => {
+      const parts = [{ text: m.text || '' }];
+      if (m.imageBase64 && m.imageMimeType) {
+        parts.push({ inlineData: { mimeType: m.imageMimeType, data: m.imageBase64 } });
+      }
+      return { role: m.role === 'ai' ? 'model' : 'user', parts };
+    });
     const r = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' },

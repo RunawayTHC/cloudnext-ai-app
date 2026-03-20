@@ -500,6 +500,26 @@
               </div>
             </div>
             <div class="card">
+              <div class="card-label">Assinatura da IA</div>
+              <div class="toggle-row" style="margin-bottom:10px;">
+                <div class="toggle-info"><h4>Assinar mensagens</h4><p>Adiciona nome e função ao final de cada resposta</p></div>
+                <label class="toggle"><input type="checkbox" id="cfg-sig-enabled"><span class="slider"></span></label>
+              </div>
+              <div id="sig-fields" style="display:none;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div class="fg" style="margin:0;">
+                    <label>Nome do Assistente</label>
+                    <input type="text" id="cfg-sig-name" placeholder="Eduarda S.">
+                  </div>
+                  <div class="fg" style="margin:0;">
+                    <label>Função / Cargo</label>
+                    <input type="text" id="cfg-sig-role" placeholder="Assist. Comercial">
+                  </div>
+                </div>
+                <div class="hint" style="margin-top:6px;">Aparece como: <em>*Nome* - Função</em> ao final de cada mensagem</div>
+              </div>
+            </div>
+            <div class="card">
               <div class="card-label">Números Ignorados</div>
               <div class="fg" style="margin:0">
                 <label>Um por linha, sem + (a IA não responde esses números)</label>
@@ -666,7 +686,16 @@
       <div class="ai-chat-msgs" id="ai-msgs">
         <div class="date-sep"><span>Nova sessão</span></div>
       </div>
+      <div id="ai-attach-preview" style="display:none;padding:6px 12px;background:#f0f2f5;border-top:1px solid #ddd;font-size:12px;color:var(--wa-muted);display:none;align-items:center;gap:8px;">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="var(--wa-muted)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>
+        <span id="ai-attach-name">—</span>
+        <button onclick="removeAIAttach()" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:14px;margin-left:auto;">✕</button>
+      </div>
       <div class="ai-input-bar">
+        <label class="ci-tool" title="Anexar imagem" style="margin-right:2px;">
+          <input type="file" id="ai-attach-input" style="display:none" onchange="handleAIAttach(event)" accept="image/*">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+        </label>
         <div class="ai-input-box">
           <textarea id="ai-input" rows="1" placeholder="Responda aqui..." onkeydown="aiKey(event)" oninput="autoH(this)"></textarea>
         </div>
@@ -800,7 +829,15 @@ async function loadConfig(){
   if(_cfg.audioScheduleStart) document.getElementById('cfg-schedule-start').value=_cfg.audioScheduleStart;
   if(_cfg.audioScheduleEnd) document.getElementById('cfg-schedule-end').value=_cfg.audioScheduleEnd;
   toggleScheduleFields();
+  const sigEnabled = !!_cfg.signatureEnabled;
+  document.getElementById('cfg-sig-enabled').checked = sigEnabled;
+  document.getElementById('sig-fields').style.display = sigEnabled ? 'block' : 'none';
+  document.getElementById('cfg-sig-name').value = _cfg.signatureName || '';
+  document.getElementById('cfg-sig-role').value = _cfg.signatureRole || '';
 }
+document.getElementById('cfg-sig-enabled').addEventListener('change', function(){
+  document.getElementById('sig-fields').style.display = this.checked ? 'block' : 'none';
+});
 async function saveConfig(){
   const body={
     persona:document.getElementById('cfg-persona').value,
@@ -814,6 +851,9 @@ async function saveConfig(){
     audioMode:document.getElementById('cfg-audio-mode').value,
     audioScheduleStart:document.getElementById('cfg-schedule-start').value,
     audioScheduleEnd:document.getElementById('cfg-schedule-end').value,
+    signatureEnabled:document.getElementById('cfg-sig-enabled').checked,
+    signatureName:document.getElementById('cfg-sig-name').value.trim(),
+    signatureRole:document.getElementById('cfg-sig-role').value.trim(),
   };
   const d=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   toast(d.ok?'✅ Salvo!':'❌ Erro ao salvar',!d.ok);
@@ -948,7 +988,24 @@ async function sendChat(){
 }
 
 // ── AI TRAINER MODAL ──
-let aiMsgs=[], pendingPersona=null;
+let aiMsgs=[], pendingPersona=null, aiAttachFile=null, aiAttachBase64=null, aiAttachMime=null;
+
+function handleAIAttach(e) {
+  const f = e.target.files[0]; if (!f) return;
+  aiAttachFile = f;
+  aiAttachMime = f.type || 'image/jpeg';
+  const prev = document.getElementById('ai-attach-preview');
+  document.getElementById('ai-attach-name').textContent = f.name + ' (' + (f.size/1024).toFixed(1) + ' KB)';
+  prev.style.display = 'flex';
+  const reader = new FileReader();
+  reader.onload = ev => { aiAttachBase64 = ev.target.result.split(',')[1]; };
+  reader.readAsDataURL(f);
+}
+function removeAIAttach() {
+  aiAttachFile = null; aiAttachBase64 = null; aiAttachMime = null;
+  document.getElementById('ai-attach-preview').style.display = 'none';
+  document.getElementById('ai-attach-input').value = '';
+}
 
 async function openAIChat(){
   document.getElementById('ai-modal').classList.add('open');
@@ -981,11 +1038,15 @@ function aiKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendAI();}
 
 async function sendAI(){
   const input=document.getElementById('ai-input');
-  const text=input.value.trim();if(!text)return;
+  const text=input.value.trim();
+  if(!text&&!aiAttachFile)return;
   const btn=document.getElementById('ai-send');btn.disabled=true;
-  aiMsgs.push({role:'user',text});
-  addMsg('ai-msgs','user',text);
+  const msgObj={role:'user',text:text||(aiAttachFile?'[imagem]':'')};
+  if(aiAttachBase64){msgObj.imageBase64=aiAttachBase64;msgObj.imageMimeType=aiAttachMime;}
+  aiMsgs.push(msgObj);
+  addMsg('ai-msgs','user',msgObj.text+(aiAttachFile?` 📎 ${aiAttachFile.name}`:''));
   input.value='';input.style.height='auto';
+  if(aiAttachFile) removeAIAttach();
   addTyping('at','ai-msgs');
   try{
     const d=await fetch('/api/training-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:aiMsgs})}).then(r=>r.json());
