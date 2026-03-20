@@ -267,6 +267,68 @@
     #toast { position:fixed; bottom:20px; right:20px; background:#323739; color:white; border-radius:8px; padding:10px 16px; font-size:13px; z-index:999; transform:translateY(60px); opacity:0; transition:all .3s; pointer-events:none; max-width:300px; }
     #toast.show{transform:translateY(0);opacity:1}
     #toast.err{background:var(--red)}
+
+    /* ── CRM / KANBAN ── */
+    #page-crm { background: var(--wa-chat-bg); }
+    .crm-tabs-bar { display:flex; align-items:center; gap:0; padding:0 20px; background:var(--wa-header); border-bottom:1px solid var(--wa-border); flex-shrink:0; }
+    .crm-tab { padding:12px 18px; background:none; border:none; color:var(--wa-muted); font-size:13px; font-weight:600; cursor:pointer; border-bottom:3px solid transparent; transition:all .15s; font-family:inherit; }
+    .crm-tab.active { color:var(--wa-green); border-bottom-color:var(--wa-green); }
+    .crm-tab-content { display:none; flex:1; overflow:hidden; flex-direction:column; }
+    .crm-tab-content.active { display:flex; }
+
+    .crm-flow-bar { display:flex; align-items:center; gap:8px; padding:10px 16px; background:var(--wa-panel); border-bottom:1px solid var(--wa-border-light); flex-shrink:0; overflow-x:auto; }
+    .flow-btn { padding:5px 14px; border-radius:20px; border:1.5px solid #ddd; background:white; color:var(--wa-muted); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all .15s; font-family:inherit; }
+    .flow-btn.active { background:rgba(0,168,132,.1); color:var(--wa-green); border-color:var(--wa-green); }
+    .flow-btn-add { padding:5px 12px; border-radius:20px; border:1.5px dashed #ccc; background:transparent; color:var(--wa-muted); font-size:12px; cursor:pointer; font-family:inherit; }
+    .flow-btn-add:hover { border-color:var(--wa-green); color:var(--wa-green); }
+
+    .kanban-scroll { flex:1; overflow-x:auto; overflow-y:hidden; padding:16px; display:flex; gap:12px; align-items:flex-start; }
+    .kanban-col { flex-shrink:0; width:230px; display:flex; flex-direction:column; gap:8px; }
+    .kanban-col-head { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-radius:8px; margin-bottom:2px; }
+    .kanban-col-head h4 { font-size:12px; font-weight:700; color:white; letter-spacing:0.3px; }
+    .kanban-col-head .col-count { font-size:11px; background:rgba(255,255,255,.25); color:white; border-radius:10px; padding:1px 7px; font-weight:600; }
+    .kanban-cards { display:flex; flex-direction:column; gap:8px; min-height:60px; }
+
+    .kcard { background:white; border-radius:10px; padding:11px 12px; box-shadow:0 1px 3px rgba(0,0,0,.1); cursor:pointer; transition:box-shadow .15s, transform .1s; border-left:3px solid transparent; }
+    .kcard:hover { box-shadow:0 3px 10px rgba(0,0,0,.13); transform:translateY(-1px); }
+    .kcard-top { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+    .kcard-avatar { width:30px; height:30px; border-radius:50%; background:var(--wa-green); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:white; flex-shrink:0; overflow:hidden; }
+    .kcard-avatar img { width:100%; height:100%; object-fit:cover; }
+    .kcard-info { flex:1; overflow:hidden; }
+    .kcard-name { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .kcard-phone { font-size:10px; color:var(--wa-muted); font-family:monospace; }
+    .urgency-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    .urgency-dot.alta { background:#ef4444; }
+    .urgency-dot.normal { background:#f59e0b; }
+    .urgency-dot.baixa { background:#8696a0; }
+
+    .kcard-summary { font-size:11px; color:#555; line-height:1.4; margin-bottom:7px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .kcard-footer { display:flex; align-items:center; justify-content:space-between; }
+    .kcard-sentiment { font-size:13px; }
+    .kcard-time { font-size:10px; color:var(--wa-muted); }
+    .kcard-appt { font-size:10px; color:#8b5cf6; font-weight:600; }
+
+    /* Lead detail modal */
+    .lead-modal { width:580px; }
+    .lead-section { margin-bottom:16px; }
+    .lead-section-title { font-size:11px; font-weight:700; color:var(--wa-muted); text-transform:uppercase; letter-spacing:.7px; margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid #f0f2f5; }
+    .stage-pills { display:flex; flex-wrap:wrap; gap:6px; }
+    .stage-pill { padding:4px 12px; border-radius:20px; border:1.5px solid #e0e0e0; background:white; color:#555; font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; font-family:inherit; }
+    .stage-pill.active { color:white; border-color:transparent; }
+    .appt-row { display:flex; gap:10px; align-items:flex-end; }
+
+    /* Appointments tab */
+    .appt-list { display:flex; flex-direction:column; gap:10px; }
+    .appt-card { background:white; border-radius:10px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,.08); display:flex; gap:14px; align-items:flex-start; cursor:pointer; transition:box-shadow .15s; }
+    .appt-card:hover { box-shadow:0 3px 8px rgba(0,0,0,.12); }
+    .appt-date-block { text-align:center; background:#f0f2f5; border-radius:8px; padding:8px 12px; flex-shrink:0; min-width:52px; }
+    .appt-day { font-size:20px; font-weight:700; color:var(--wa-green); line-height:1; }
+    .appt-month { font-size:10px; text-transform:uppercase; color:var(--wa-muted); font-weight:600; }
+    .appt-time { font-size:12px; color:#555; font-weight:600; margin-top:2px; }
+    .appt-info { flex:1; }
+    .appt-name { font-size:13px; font-weight:600; margin-bottom:3px; }
+    .appt-notes { font-size:12px; color:var(--wa-muted); }
+    .followup-badge { font-size:10px; background:rgba(139,92,246,.1); color:#8b5cf6; border-radius:10px; padding:2px 8px; font-weight:600; }
   </style>
 </head>
 <body>
@@ -298,6 +360,10 @@
       <div class="s-item" data-page="test" title="Chat de Teste">
         <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
         <span>Testar</span>
+      </div>
+      <div class="s-item" data-page="crm" title="CRM & Agenda">
+        <svg viewBox="0 0 24 24"><path d="M20 6h-2.18c.07-.44.18-.88.18-1.33C18 2.54 15.96.5 13.5.5c-1.32 0-2.5.56-3.36 1.45L9 3.08 7.86 1.95C7 1.06 5.82.5 4.5.5 2.04.5 0 2.54 0 5c0 .45.11.89.18 1.33H0v12c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-7.5-4c1.11 0 2 .89 2 2 0 1.11-.89 2-2 2-1.11 0-2-.89-2-2 0-1.11.89-2 2-2zM4.5 2.5c1.11 0 2 .89 2 2 0 1.11-.89 2-2 2-1.11 0-2-.89-2-2 0-1.11.89-2 2-2zM20 18H2v-9.62C2.47 8.8 3.2 9 4 9h16v9z"/></svg>
+        <span>CRM</span>
       </div>
     </div>
 
@@ -739,7 +805,130 @@
       </div>
     </div>
 
+    <!-- ═══ CRM ═══ -->
+    <div class="page" id="page-crm">
+      <div class="topbar">
+        <div class="topbar-icon" style="background:rgba(139,92,246,.15);">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="#8b5cf6"><path d="M20 6h-2.18c.07-.44.18-.88.18-1.33C18 2.54 15.96.5 13.5.5c-1.32 0-2.5.56-3.36 1.45L9 3.08 7.86 1.95C7 1.06 5.82.5 4.5.5 2.04.5 0 2.54 0 5c0 .45.11.89.18 1.33H0v12c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM20 18H2v-9.62C2.47 8.8 3.2 9 4 9h16v9z"/></svg>
+        </div>
+        <div class="topbar-info">
+          <h3>CRM & Agenda</h3>
+          <p>Gestão de leads e agendamentos</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost" onclick="loadCRM()" style="font-size:12px;">↻ Atualizar</button>
+        </div>
+      </div>
+      <!-- Tab bar -->
+      <div class="crm-tabs-bar">
+        <button class="crm-tab active" onclick="switchCRMTab('kanban',this)">Kanban</button>
+        <button class="crm-tab" onclick="switchCRMTab('appointments',this)">Agendamentos</button>
+        <button class="crm-tab" onclick="switchCRMTab('followups',this)">Follow-ups</button>
+      </div>
+      <!-- Kanban tab -->
+      <div class="crm-tab-content active" id="crm-tab-kanban">
+        <div class="crm-flow-bar" id="crm-flow-bar">
+          <button class="flow-btn active" onclick="selectFlow('default',this)">Fluxo Padrão</button>
+          <button class="flow-btn-add" onclick="openCreateFlowModal()">+ Novo Fluxo</button>
+        </div>
+        <div class="kanban-scroll" id="kanban-board"></div>
+      </div>
+      <!-- Appointments tab -->
+      <div class="crm-tab-content" id="crm-tab-appointments">
+        <div class="scroll-area" style="background:#f0f2f5;">
+          <div class="appt-list" id="appointments-list"></div>
+        </div>
+      </div>
+      <!-- Follow-ups tab -->
+      <div class="crm-tab-content" id="crm-tab-followups">
+        <div class="scroll-area" style="background:#f0f2f5;">
+          <div id="followups-list"></div>
+        </div>
+      </div>
+    </div>
+
   </main>
+</div>
+
+<!-- Lead detail modal -->
+<div class="modal-overlay" id="lead-modal">
+  <div class="modal lead-modal">
+    <div class="modal-head">
+      <div id="lead-modal-avatar" style="width:36px;height:36px;border-radius:50%;background:var(--wa-green);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:white;flex-shrink:0;overflow:hidden;"></div>
+      <h3 id="lead-modal-title" style="margin-left:10px;">Lead</h3>
+      <button class="modal-close" onclick="document.getElementById('lead-modal').classList.remove('open')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="lead-modal-phone">
+      <div class="lead-section">
+        <div class="lead-section-title">Estágio</div>
+        <div class="stage-pills" id="lead-stage-pills"></div>
+      </div>
+      <div class="lead-section">
+        <div class="lead-section-title">Resumo da conversa</div>
+        <textarea id="lead-summary" rows="4" style="width:100%;padding:9px 12px;background:#f0f2f5;border:1.5px solid transparent;border-radius:8px;font-size:13px;outline:none;font-family:inherit;resize:vertical;" placeholder="Resumo gerado pela IA..."></textarea>
+      </div>
+      <div class="lead-section">
+        <div class="lead-section-title">Agendamento</div>
+        <div class="appt-row">
+          <div class="fg" style="flex:1;margin-bottom:0;">
+            <label>Data e Hora</label>
+            <input type="datetime-local" id="lead-appt-dt" style="width:100%;padding:9px 12px;background:#f0f2f5;border:1.5px solid transparent;border-radius:8px;font-size:13px;outline:none;">
+          </div>
+          <div class="fg" style="flex:1;margin-bottom:0;">
+            <label>Notas</label>
+            <input type="text" id="lead-appt-notes" placeholder="ex: Visita técnica">
+          </div>
+        </div>
+      </div>
+      <div class="lead-section">
+        <div class="lead-section-title">Follow-up automático</div>
+        <div class="toggle-row">
+          <div class="toggle-info"><h4>Ativar follow-up</h4><p>Envia mensagem automaticamente antes do agendamento</p></div>
+          <label class="toggle"><input type="checkbox" id="lead-followup-enabled"><span class="slider"></span></label>
+        </div>
+        <div id="lead-followup-config" style="display:none;margin-top:10px;">
+          <div class="fg">
+            <label>Minutos antes do agendamento</label>
+            <input type="number" id="lead-followup-offset" value="60" min="5" placeholder="60">
+          </div>
+          <div class="fg">
+            <label>Mensagem de follow-up</label>
+            <textarea id="lead-followup-msg" rows="3" placeholder="ex: Olá {nome}! Lembrando que temos um agendamento hoje. Até logo!"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-green" onclick="saveLeadModal()">Salvar</button>
+      <button class="btn" style="background:#10b981;color:white;" onclick="setLeadStage('convertido')">✓ Convertido</button>
+      <button class="btn btn-red" onclick="setLeadStage('perdido')">✗ Perdido</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create flow modal -->
+<div class="modal-overlay" id="flow-modal">
+  <div class="modal" style="width:440px;">
+    <div class="modal-head">
+      <h3>Criar Fluxo Personalizado</h3>
+      <button class="modal-close" onclick="document.getElementById('flow-modal').classList.remove('open')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>Nome do Fluxo</label>
+        <input type="text" id="flow-name" placeholder="ex: Pós-venda, Reativação...">
+      </div>
+      <div class="fg">
+        <label>Etapas (uma por linha)</label>
+        <textarea id="flow-stages" rows="5" placeholder="Ex:&#10;Contato Inicial&#10;Proposta Enviada&#10;Em Negociação&#10;Fechado"></textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-green" onclick="createFlow()">Criar Fluxo</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('flow-modal').classList.remove('open')">Cancelar</button>
+    </div>
+  </div>
 </div>
 
 <!-- ═══ AI TRAINER MODAL ═══ -->
@@ -826,6 +1015,7 @@ document.querySelectorAll('.s-item').forEach(el => {
     document.getElementById('page-'+el.dataset.page).classList.add('active');
     if(el.dataset.page==='logs') loadLogs();
     if(el.dataset.page==='training'){ loadConfig(); loadElevenLabsCredits(); loadContacts(); }
+    if(el.dataset.page==='crm'){ loadCRM(); }
   });
 });
 
@@ -1132,6 +1322,293 @@ async function resumeContact(phone) {
 }
 setInterval(loadPausedContacts, 15000);
 setInterval(loadContacts, 30000);
+
+// ── CRM ──
+const DEFAULT_STAGES = [
+  { id:'novo',        name:'Novo Contato',        color:'#8696a0' },
+  { id:'atendimento', name:'Em Atendimento',       color:'#3b82f6' },
+  { id:'aguardando',  name:'Aguardando Retorno',   color:'#f59e0b' },
+  { id:'qualificado', name:'Qualificado',          color:'#00a884' },
+  { id:'agendado',    name:'Agendado',             color:'#8b5cf6' },
+  { id:'humano',      name:'Atend. Humano',        color:'#ef4444' },
+  { id:'convertido',  name:'Convertido',           color:'#10b981' },
+  { id:'perdido',     name:'Perdido',              color:'#6b7280' },
+];
+let _crmLeads = [];
+let _activeFlow = 'default';
+let _customFlows = [];
+
+function switchCRMTab(tab, btn) {
+  document.querySelectorAll('.crm-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.crm-tab-content').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('crm-tab-' + tab).classList.add('active');
+  if (tab === 'appointments') loadAppointments();
+  if (tab === 'followups') loadFollowups();
+}
+
+async function loadCRM() {
+  const d = await fetch('/api/crm/leads').then(r => r.json()).catch(() => null);
+  _crmLeads = d?.leads || [];
+  const fd = await fetch('/api/crm/flows').then(r => r.json()).catch(() => null);
+  _customFlows = fd?.flows || [];
+  renderFlowBar();
+  renderKanban();
+}
+
+function renderFlowBar() {
+  const bar = document.getElementById('crm-flow-bar');
+  let html = `<button class="flow-btn ${_activeFlow==='default'?'active':''}" onclick="selectFlow('default',this)">Fluxo Padrão</button>`;
+  _customFlows.forEach(f => {
+    html += `<button class="flow-btn ${_activeFlow===f.id?'active':''}" onclick="selectFlow('${f.id}',this)">${f.name} <span onclick="event.stopPropagation();deleteFlow('${f.id}')" style="margin-left:5px;opacity:.6;font-size:11px;">✕</span></button>`;
+  });
+  html += `<button class="flow-btn-add" onclick="openCreateFlowModal()">+ Novo Fluxo</button>`;
+  bar.innerHTML = html;
+}
+
+function selectFlow(id, btn) {
+  _activeFlow = id;
+  document.querySelectorAll('.flow-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderKanban();
+}
+
+function renderKanban() {
+  const board = document.getElementById('kanban-board');
+  const stages = _activeFlow === 'default'
+    ? DEFAULT_STAGES
+    : (_customFlows.find(f => f.id === _activeFlow)?.stages || []).map((s, i) => ({ id: String(i), name: s, color: '#8696a0' }));
+
+  const leadsByStage = {};
+  stages.forEach(s => { leadsByStage[s.id] = []; });
+
+  if (_activeFlow === 'default') {
+    _crmLeads.forEach(l => {
+      const stage = l.stage || 'novo';
+      if (leadsByStage[stage]) leadsByStage[stage].push(l);
+      else leadsByStage['novo'].push(l);
+    });
+  } else {
+    _crmLeads.filter(l => l.flow_id === _activeFlow).forEach(l => {
+      const stageIdx = String(stages.findIndex(s => s.name === l.stage));
+      if (leadsByStage[stageIdx]) leadsByStage[stageIdx].push(l);
+    });
+  }
+
+  board.innerHTML = stages.map(s => {
+    const leads = leadsByStage[s.id] || [];
+    const cards = leads.map(l => {
+      const name = l.name || l.phone;
+      const initial = name.charAt(0).toUpperCase();
+      const avatar = l.profile_pic
+        ? `<img src="${l.profile_pic}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">`
+        : initial;
+      const sentimentIcon = l.sentiment === 'positivo' ? '😊' : l.sentiment === 'negativo' ? '😟' : '😐';
+      const apptHtml = l.appointment_at ? `<span class="kcard-appt">📅 ${new Date(Number(l.appointment_at)).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>` : '';
+      const ago = timeAgo(l.updated_at);
+      const escapedPhone = (l.phone||'').replace(/'/g,"\\'");
+      return `<div class="kcard" style="border-left-color:${s.color}" onclick="openLeadModal('${escapedPhone}')">
+        <div class="kcard-top">
+          <div class="kcard-avatar">${avatar}</div>
+          <div class="kcard-info">
+            <div class="kcard-name">${name}</div>
+            <div class="kcard-phone">${l.phone}</div>
+          </div>
+          <div class="urgency-dot ${l.urgency||'normal'}"></div>
+        </div>
+        ${l.summary ? `<div class="kcard-summary">${l.summary}</div>` : ''}
+        <div class="kcard-footer">
+          <span class="kcard-sentiment">${sentimentIcon}</span>
+          ${apptHtml}
+          <span class="kcard-time">${ago}</span>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="kanban-col">
+      <div class="kanban-col-head" style="background:${s.color}">
+        <h4>${s.name}</h4>
+        <span class="col-count">${leads.length}</span>
+      </div>
+      <div class="kanban-cards">${cards || '<div style="height:40px;"></div>'}</div>
+    </div>`;
+  }).join('');
+}
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - Number(ts);
+  if (diff < 60000) return 'agora';
+  if (diff < 3600000) return Math.floor(diff/60000) + 'min';
+  if (diff < 86400000) return Math.floor(diff/3600000) + 'h';
+  return Math.floor(diff/86400000) + 'd';
+}
+
+function openLeadModal(phone) {
+  const lead = _crmLeads.find(l => l.phone === phone);
+  if (!lead) return;
+  document.getElementById('lead-modal-phone').value = phone;
+  const name = lead.name || phone;
+  document.getElementById('lead-modal-title').textContent = name;
+  const avatarEl = document.getElementById('lead-modal-avatar');
+  if (lead.profile_pic) {
+    avatarEl.innerHTML = `<img src="${lead.profile_pic}" style="width:100%;height:100%;object-fit:cover;" onerror="this.innerHTML='${name.charAt(0).toUpperCase()}'">`;
+  } else {
+    avatarEl.textContent = name.charAt(0).toUpperCase();
+  }
+  // Stage pills
+  const pillsEl = document.getElementById('lead-stage-pills');
+  pillsEl.innerHTML = DEFAULT_STAGES.map(s =>
+    `<button class="stage-pill ${lead.stage===s.id?'active':''}" style="${lead.stage===s.id?'background:'+s.color+';':''}" onclick="highlightStagePill(this,'${s.color}');document.getElementById('lead-modal-phone').dataset.stage='${s.id}'">${s.name}</button>`
+  ).join('');
+  document.getElementById('lead-modal-phone').dataset.stage = lead.stage || 'novo';
+  document.getElementById('lead-summary').value = lead.summary || '';
+  if (lead.appointment_at) {
+    const d = new Date(Number(lead.appointment_at));
+    document.getElementById('lead-appt-dt').value = d.toISOString().slice(0,16);
+  } else {
+    document.getElementById('lead-appt-dt').value = '';
+  }
+  document.getElementById('lead-appt-notes').value = lead.appointment_notes || '';
+  document.getElementById('lead-followup-enabled').checked = lead.followup_enabled || false;
+  document.getElementById('lead-followup-offset').value = lead.followup_offset_min || 60;
+  document.getElementById('lead-followup-msg').value = lead.followup_msg || '';
+  document.getElementById('lead-followup-config').style.display = lead.followup_enabled ? 'block' : 'none';
+  document.getElementById('lead-followup-enabled').onchange = function() {
+    document.getElementById('lead-followup-config').style.display = this.checked ? 'block' : 'none';
+  };
+  document.getElementById('lead-modal').classList.add('open');
+}
+
+function highlightStagePill(btn, color) {
+  document.querySelectorAll('#lead-stage-pills .stage-pill').forEach(p => { p.classList.remove('active'); p.style.background = ''; p.style.color = ''; });
+  btn.classList.add('active');
+  btn.style.background = color;
+  btn.style.color = 'white';
+}
+
+async function saveLeadModal() {
+  const phone = document.getElementById('lead-modal-phone').value;
+  const stage = document.getElementById('lead-modal-phone').dataset.stage;
+  const summary = document.getElementById('lead-summary').value;
+  const apptDt = document.getElementById('lead-appt-dt').value;
+  const apptNotes = document.getElementById('lead-appt-notes').value;
+  const followupEnabled = document.getElementById('lead-followup-enabled').checked;
+  const followupOffset = parseInt(document.getElementById('lead-followup-offset').value) || 60;
+  const followupMsg = document.getElementById('lead-followup-msg').value;
+  await fetch('/api/crm/leads/' + encodeURIComponent(phone), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stage, summary,
+      appointment_at: apptDt ? new Date(apptDt).getTime() : null,
+      appointment_notes: apptNotes || null,
+      followup_enabled: followupEnabled,
+      followup_offset_min: followupOffset,
+      followup_msg: followupMsg
+    })
+  });
+  document.getElementById('lead-modal').classList.remove('open');
+  toast('Lead atualizado!');
+  loadCRM();
+}
+
+async function setLeadStage(stage) {
+  const phone = document.getElementById('lead-modal-phone').value;
+  await fetch('/api/crm/leads/' + encodeURIComponent(phone), {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stage })
+  });
+  document.getElementById('lead-modal').classList.remove('open');
+  toast(stage === 'convertido' ? '✓ Marcado como convertido!' : '✗ Marcado como perdido');
+  loadCRM();
+}
+
+async function loadAppointments() {
+  const d = await fetch('/api/crm/appointments').then(r => r.json()).catch(() => null);
+  const el = document.getElementById('appointments-list');
+  if (!d?.appointments?.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--wa-muted);padding:32px;font-size:13px;">Nenhum agendamento ainda.</div>';
+    return;
+  }
+  el.innerHTML = d.appointments.map(a => {
+    const dt = new Date(Number(a.appointment_at));
+    const day = dt.toLocaleDateString('pt-BR', { day: '2-digit' });
+    const month = dt.toLocaleDateString('pt-BR', { month: 'short' });
+    const time = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const escapedPhone = (a.phone||'').replace(/'/g,"\\'");
+    return `<div class="appt-card" onclick="openLeadModal('${escapedPhone}')">
+      <div class="appt-date-block">
+        <div class="appt-day">${day}</div>
+        <div class="appt-month">${month}</div>
+        <div class="appt-time">${time}</div>
+      </div>
+      <div class="appt-info">
+        <div class="appt-name">${a.name || a.phone}</div>
+        <div class="appt-notes">${a.appointment_notes || ''}</div>
+        <div style="margin-top:5px;font-size:11px;color:var(--wa-muted);">${a.phone}</div>
+      </div>
+      ${a.followup_enabled ? '<span class="followup-badge">Follow-up ativo</span>' : ''}
+    </div>`;
+  }).join('');
+}
+
+async function loadFollowups() {
+  const d = await fetch('/api/crm/followups').then(r => r.json()).catch(() => null);
+  const el = document.getElementById('followups-list');
+  if (!d?.followups?.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--wa-muted);padding:32px;font-size:13px;">Nenhum follow-up agendado.</div>';
+    return;
+  }
+  el.innerHTML = '<div class="appt-list">' + d.followups.map(f => {
+    const dt = new Date(Number(f.scheduled_at));
+    const fmtDt = dt.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const statusColor = f.sent ? '#10b981' : '#f59e0b';
+    const statusText = f.sent ? 'Enviado' : 'Pendente';
+    return `<div class="appt-card">
+      <div class="appt-date-block">
+        <div style="font-size:11px;font-weight:700;color:${statusColor};">${statusText}</div>
+        <div style="font-size:12px;color:#555;margin-top:4px;">${fmtDt}</div>
+      </div>
+      <div class="appt-info">
+        <div class="appt-name">${f.phone}</div>
+        <div class="appt-notes">${f.message.slice(0,80)}${f.message.length>80?'...':''}</div>
+      </div>
+      ${!f.sent ? `<button onclick="deleteFollowup('${f.id}')" style="background:none;border:none;cursor:pointer;color:var(--wa-muted);font-size:18px;padding:4px;">✕</button>` : ''}
+    </div>`;
+  }).join('') + '</div>';
+}
+
+async function deleteFollowup(id) {
+  await fetch('/api/crm/followups/' + id, { method: 'DELETE' });
+  loadFollowups();
+}
+
+function openCreateFlowModal() {
+  document.getElementById('flow-name').value = '';
+  document.getElementById('flow-stages').value = '';
+  document.getElementById('flow-modal').classList.add('open');
+}
+
+async function createFlow() {
+  const name = document.getElementById('flow-name').value.trim();
+  const stagesText = document.getElementById('flow-stages').value.trim();
+  if (!name || !stagesText) return toast('Preencha nome e etapas', true);
+  const stages = stagesText.split('\n').map(s => s.trim()).filter(Boolean);
+  await fetch('/api/crm/flows', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, stages })
+  });
+  document.getElementById('flow-modal').classList.remove('open');
+  toast('Fluxo criado!');
+  loadCRM();
+}
+
+async function deleteFlow(id) {
+  if (!confirm('Excluir este fluxo?')) return;
+  await fetch('/api/crm/flows/' + id, { method: 'DELETE' });
+  if (_activeFlow === id) _activeFlow = 'default';
+  loadCRM();
+}
 
 let _contactsAll = [], _contactsPage = 1;
 const CONTACTS_PER_PAGE = 10;

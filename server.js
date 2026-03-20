@@ -55,6 +55,39 @@ async function initDB() {
       history JSONB NOT NULL DEFAULT '[]',
       updated_at BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS crm_leads (
+      phone TEXT PRIMARY KEY,
+      name TEXT DEFAULT '',
+      raw_jid TEXT,
+      profile_pic TEXT,
+      stage TEXT DEFAULT 'novo',
+      flow_id TEXT DEFAULT 'default',
+      summary TEXT DEFAULT '',
+      urgency TEXT DEFAULT 'normal',
+      sentiment TEXT DEFAULT 'neutro',
+      appointment_at BIGINT,
+      appointment_notes TEXT,
+      followup_enabled BOOLEAN DEFAULT false,
+      followup_offset_min INT DEFAULT 60,
+      followup_msg TEXT DEFAULT '',
+      created_at BIGINT,
+      updated_at BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS crm_flows (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      stages JSONB NOT NULL DEFAULT '[]',
+      created_at BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS crm_followups (
+      id TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      scheduled_at BIGINT NOT NULL,
+      message TEXT NOT NULL,
+      type TEXT DEFAULT 'appointment',
+      sent BOOLEAN DEFAULT false,
+      created_at BIGINT
+    );
     INSERT INTO app_stats (key, value) VALUES
       ('totalSent',0),('textSent',0),('audioSent',0),('errors',0),('startTime', EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
     ON CONFLICT (key) DO NOTHING;
@@ -378,6 +411,92 @@ function resumeContact(phone) {
   humanPaused.delete(phone);
 }
 
+// ── CRM ──
+const DEFAULT_STAGES = [
+  { id: 'novo',       name: 'Novo Contato',          color: '#8696a0' },
+  { id: 'atendimento',name: 'Em Atendimento',         color: '#3b82f6' },
+  { id: 'aguardando', name: 'Aguardando Retorno',     color: '#f59e0b' },
+  { id: 'qualificado',name: 'Qualificado',            color: '#00a884' },
+  { id: 'agendado',   name: 'Agendado',               color: '#8b5cf6' },
+  { id: 'humano',     name: 'Atendimento Humano',     color: '#ef4444' },
+  { id: 'convertido', name: 'Convertido',             color: '#10b981' },
+  { id: 'perdido',    name: 'Perdido',                color: '#6b7280' },
+];
+
+async function analyzeCRM(phone, history) {
+  if (!GEMINI_KEY || history.length < 2) return;
+  try {
+    const lastMsgs = history.slice(-12);
+    const convText = lastMsgs.map(m => `${m.role === 'user' ? 'Cliente' : 'Atendente'}: ${m.text}`).join('\n');
+    const prompt = `Analise esta conversa de atendimento e retorne APENAS JSON válido (sem markdown, sem explicação):
+{
+  "stage": "novo|atendimento|aguardando|qualificado|agendado|humano|convertido|perdido",
+  "summary": "resumo de 2-3 linhas com pontos principais da conversa",
+  "urgency": "baixa|normal|alta",
+  "sentiment": "negativo|neutro|positivo",
+  "appointment_iso": "2026-03-23T14:00:00" ou null se não houver agendamento,
+  "appointment_notes": "notas do agendamento" ou null
+}
+Regras de stage:
+- "novo": apenas primeiro contato
+- "atendimento": IA conversando ativamente
+- "aguardando": IA enviou última mensagem, aguardando resposta
+- "qualificado": informações principais já coletadas
+- "agendado": data e hora marcadas explicitamente
+- "humano": solicitou humano ou humano assumiu
+- "convertido"/"perdido": apenas se cliente confirmou ou desistiu explicitamente
+
+Conversa:
+${convText}`;
+
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }) }
+    );
+    if (!r.ok) return;
+    const d = await r.json();
+    const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const json = JSON.parse(text.replace(/```json\n?|\n?```/g, '').trim());
+
+    const contact = contactsMap.get(phone) || {};
+    const now = Date.now();
+    const appointmentAt = json.appointment_iso ? new Date(json.appointment_iso).getTime() : null;
+
+    await pool.query(`
+      INSERT INTO crm_leads (phone, name, raw_jid, profile_pic, stage, summary, urgency, sentiment, appointment_at, appointment_notes, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+      ON CONFLICT (phone) DO UPDATE SET
+        name=EXCLUDED.name, raw_jid=EXCLUDED.raw_jid, profile_pic=EXCLUDED.profile_pic,
+        stage=CASE WHEN crm_leads.stage IN ('convertido','perdido') THEN crm_leads.stage ELSE EXCLUDED.stage END,
+        summary=EXCLUDED.summary, urgency=EXCLUDED.urgency, sentiment=EXCLUDED.sentiment,
+        appointment_at=COALESCE(EXCLUDED.appointment_at, crm_leads.appointment_at),
+        appointment_notes=COALESCE(EXCLUDED.appointment_notes, crm_leads.appointment_notes),
+        updated_at=EXCLUDED.updated_at
+    `, [phone, contact.name || '', contact.rawJid || '', contact.profilePic || null,
+        json.stage || 'atendimento', json.summary || '', json.urgency || 'normal', json.sentiment || 'neutro',
+        appointmentAt, json.appointment_notes || null, now]);
+
+    // Schedule follow-up if appointment detected
+    if (appointmentAt && appointmentAt > now) {
+      const lead = await pool.query('SELECT followup_enabled, followup_offset_min, followup_msg FROM crm_leads WHERE phone=$1', [phone]);
+      const l = lead.rows[0];
+      if (l?.followup_enabled && l.followup_msg) {
+        const scheduledAt = appointmentAt - (l.followup_offset_min * 60 * 1000);
+        if (scheduledAt > now) {
+          await pool.query(
+            'INSERT INTO crm_followups (id, phone, scheduled_at, message, type, sent, created_at) VALUES ($1,$2,$3,$4,$5,false,$6) ON CONFLICT DO NOTHING',
+            [uuidv4(), phone, scheduledAt, l.followup_msg, 'appointment', now]
+          ).catch(() => {});
+        }
+      }
+    }
+    console.log(`[CRM] ${phone} → stage=${json.stage} urgency=${json.urgency}`);
+  } catch (err) {
+    console.log(`[CRM ERR] ${err.message}`);
+  }
+}
+
 function captureLidFromSendResponse(sentTo, responseData) {
   const resolvedJid = responseData?.key?.remoteJid || '';
   if (resolvedJid.includes('@s.whatsapp.net')) {
@@ -576,6 +695,8 @@ async function processMessage(phone, messageText, sendTarget = null, rawPhone = 
         await addLog('message', 'out', phone, cleanResponse.slice(0, 200), { format: 'text' });
       } else throw new Error(`sendText failed: ${JSON.stringify(r.data)}`);
     }
+    // Background CRM analysis (non-blocking)
+    analyzeCRM(phone, [...history, { role: 'user', text: messageText }, { role: 'model', text: cleanResponse.replace(/^\*.+?\*:\s*\n\n/, '') }]).catch(() => {});
   } catch (err) {
     await incStat('errors');
     await addLog('error', 'system', phone, err.message);
@@ -869,6 +990,93 @@ app.get('/api/elevenlabs/credits', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
+// ── CRM API ──
+app.get('/api/crm/leads', async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM crm_leads ORDER BY updated_at DESC');
+    res.json({ ok: true, leads: rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.patch('/api/crm/leads/:phone', async (req, res) => {
+  try {
+    const phone = decodeURIComponent(req.params.phone);
+    const { stage, summary, followup_enabled, followup_offset_min, followup_msg, appointment_at, appointment_notes } = req.body;
+    const updates = [], vals = [];
+    let i = 1;
+    if (stage !== undefined) { updates.push(`stage=$${i++}`); vals.push(stage); }
+    if (summary !== undefined) { updates.push(`summary=$${i++}`); vals.push(summary); }
+    if (followup_enabled !== undefined) { updates.push(`followup_enabled=$${i++}`); vals.push(followup_enabled); }
+    if (followup_offset_min !== undefined) { updates.push(`followup_offset_min=$${i++}`); vals.push(followup_offset_min); }
+    if (followup_msg !== undefined) { updates.push(`followup_msg=$${i++}`); vals.push(followup_msg); }
+    if (appointment_at !== undefined) { updates.push(`appointment_at=$${i++}`); vals.push(appointment_at); }
+    if (appointment_notes !== undefined) { updates.push(`appointment_notes=$${i++}`); vals.push(appointment_notes); }
+    if (updates.length) {
+      updates.push(`updated_at=$${i++}`); vals.push(Date.now()); vals.push(phone);
+      await pool.query(`UPDATE crm_leads SET ${updates.join(',')} WHERE phone=$${i}`, vals);
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.get('/api/crm/appointments', async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM crm_leads WHERE appointment_at IS NOT NULL ORDER BY appointment_at ASC');
+    res.json({ ok: true, appointments: rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.get('/api/crm/followups', async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM crm_followups ORDER BY scheduled_at ASC');
+    res.json({ ok: true, followups: rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/crm/followups', async (req, res) => {
+  try {
+    const { phone, scheduledAt, message, type } = req.body;
+    if (!phone || !scheduledAt || !message) return res.status(400).json({ error: 'phone, scheduledAt, message obrigatórios' });
+    const id = uuidv4();
+    await pool.query(
+      'INSERT INTO crm_followups (id, phone, scheduled_at, message, type, sent, created_at) VALUES ($1,$2,$3,$4,$5,false,$6)',
+      [id, phone, scheduledAt, message, type || 'manual', Date.now()]
+    );
+    res.json({ ok: true, id });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.delete('/api/crm/followups/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM crm_followups WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.get('/api/crm/flows', async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM crm_flows ORDER BY created_at ASC');
+    res.json({ ok: true, flows: rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/crm/flows', async (req, res) => {
+  try {
+    const { name, stages } = req.body;
+    if (!name || !stages?.length) return res.status(400).json({ error: 'name e stages obrigatórios' });
+    const id = uuidv4();
+    await pool.query('INSERT INTO crm_flows (id, name, stages, created_at) VALUES ($1,$2,$3,$4)', [id, name, JSON.stringify(stages), Date.now()]);
+    res.json({ ok: true, id });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.delete('/api/crm/flows/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM crm_flows WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
 // ── CONTACTS API ──
 app.get('/api/contacts', (req, res) => {
   const contacts = [];
@@ -1000,6 +1208,21 @@ app.listen(PORT, async () => {
   await loadStats();
   await loadRelayConfig();
   console.log('✅ Config, stats e relay carregados do banco');
+
+  // Follow-up cron: check every minute
+  setInterval(async () => {
+    try {
+      const now = Date.now();
+      const { rows } = await pool.query('SELECT * FROM crm_followups WHERE sent=false AND scheduled_at <= $1', [now]);
+      for (const f of rows) {
+        const contact = contactsMap.get(f.phone);
+        const sendTarget = contact?.rawJid?.includes('@lid') ? contact.rawJid : null;
+        await sendText(sendTarget || f.phone, f.message);
+        await pool.query('UPDATE crm_followups SET sent=true WHERE id=$1', [f.id]);
+        await addLog('info', 'system', f.phone, `Follow-up disparado: ${f.message.slice(0,60)}`).catch(()=>{});
+      }
+    } catch (err) { console.log(`[FOLLOWUP CRON] ${err.message}`); }
+  }, 60000);
 
   const existing = await getInstanceStatus().catch(() => null);
   if (existing) {
