@@ -411,24 +411,25 @@ async function processMessage(phone, messageText) {
     const rawResponse = await callGemini(messageText, persona, geminiModel, history);
     await addLog('ai', 'system', phone, `Gemini: ${rawResponse.slice(0, 120)}`);
 
-    let cleanResponse = rawResponse.replace(/^\[(AUDIO|TEXTO)\]\s*/i, '').trim();
+    // Strip [AUDIO]/[TEXTO] tags from anywhere in the response
+    let cleanResponse = rawResponse.replace(/\[(AUDIO|TEXTO)\]\s*/gi, '').trim();
 
     // Fix WhatsApp formatting: replace **text** with *text*
     cleanResponse = cleanResponse.replace(/\*\*(.+?)\*\*/gs, '*$1*');
 
-    // Prepend signature if enabled
-    const { signatureEnabled, signatureName, signatureRole } = state.config;
-    if (signatureEnabled && signatureName) {
-      const sig = signatureRole ? `*${signatureName}* - ${signatureRole}:` : `*${signatureName}*:`;
-      cleanResponse = `${sig}\n\n${cleanResponse}`;
-    }
-
-    // Save updated history
+    // Save history WITHOUT signature so AI doesn't learn to repeat it
     await saveHistory(phone, [
       ...history,
       { role: 'user', text: messageText },
       { role: 'model', text: cleanResponse }
     ]);
+
+    // Prepend signature AFTER saving history
+    const { signatureEnabled, signatureName, signatureRole } = state.config;
+    if (signatureEnabled && signatureName) {
+      const sig = signatureRole ? `*${signatureName}* - ${signatureRole}:` : `*${signatureName}*:`;
+      cleanResponse = `${sig}\n\n${cleanResponse}`;
+    }
 
     const isAudio = shouldSendAudio(rawResponse);
 
@@ -491,6 +492,7 @@ app.post('/webhook', async (req, res) => {
     const remoteJid = msg.key?.remoteJid || msg.remoteJid;
     const phone = remoteJid?.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').split(':')[0];
     if (!phone || remoteJid?.includes('@g.us')) return;
+    console.log(`[MSG] phone="${phone}" ignored=${JSON.stringify(state.config.ignoredNumbers)} blocked=${state.config.ignoredNumbers?.includes(phone)}`);
     if (state.config.ignoredNumbers?.includes(phone)) return;
     const messageText =
       msg.message?.conversation ||
