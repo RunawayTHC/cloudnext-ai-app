@@ -700,6 +700,18 @@
               </div>
             </div>
             <div class="card">
+              <div class="card-label">Follow-up para Não-Respondidos</div>
+              <div class="toggle-row" style="margin-bottom:10px;">
+                <div class="toggle-info"><h4>Ativar follow-up automático</h4><p>Envia mensagem se cliente não responder após a IA</p></div>
+                <label class="toggle"><input type="checkbox" id="cfg-noreply-enabled" onchange="toggleNoreplyFields()"><span class="slider"></span></label>
+              </div>
+              <div id="noreply-fields" style="display:none;">
+                <div id="noreply-steps-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+                <button class="btn btn-ghost" onclick="addNoreplyStep()" style="width:100%;font-size:12px;">+ Adicionar etapa</button>
+                <div class="hint" style="margin-top:6px;">Use {nome} para inserir o nome do cliente na mensagem.</div>
+              </div>
+            </div>
+            <div class="card">
               <div class="card-label">Créditos ElevenLabs</div>
               <div id="elevenlabs-credits-content" style="font-size:13px;color:var(--wa-muted);">Carregando...</div>
             </div>
@@ -903,6 +915,7 @@
       <button class="btn btn-green" onclick="saveLeadModal()">Salvar</button>
       <button class="btn" style="background:#10b981;color:white;" onclick="setLeadStage('convertido')">✓ Convertido</button>
       <button class="btn btn-red" onclick="setLeadStage('perdido')">✗ Perdido</button>
+      <button class="btn" style="background:#f0f2f5;color:#ef4444;margin-left:auto;" onclick="deleteLead()">🗑 Excluir</button>
     </div>
   </div>
 </div>
@@ -1110,6 +1123,11 @@ async function loadConfig(){
   if(_cfg.businessHoursEnd)   document.getElementById('cfg-biz-end').value=_cfg.businessHoursEnd;
   document.getElementById('cfg-biz-msg').value=_cfg.businessHoursMsg||'';
   document.getElementById('cfg-restrict-hours').checked=!!_cfg.restrictAIOutsideHours;
+  const noreplyEnabled = !!_cfg.noreplyFollowupEnabled;
+  document.getElementById('cfg-noreply-enabled').checked = noreplyEnabled;
+  document.getElementById('noreply-fields').style.display = noreplyEnabled ? 'block' : 'none';
+  _noreplySteps = Array.isArray(_cfg.noreplyFollowupSteps) ? _cfg.noreplyFollowupSteps : [];
+  renderNoreplySteps();
 }
 document.getElementById('cfg-biz-enabled').addEventListener('change', function(){
   document.getElementById('biz-fields').style.display = this.checked ? 'block' : 'none';
@@ -1145,6 +1163,8 @@ async function saveConfig(){
     businessHoursEnd:document.getElementById('cfg-biz-end').value,
     businessHoursMsg:document.getElementById('cfg-biz-msg').value.trim(),
     restrictAIOutsideHours:document.getElementById('cfg-restrict-hours').checked,
+    noreplyFollowupEnabled:document.getElementById('cfg-noreply-enabled').checked,
+    noreplyFollowupSteps:_noreplySteps,
   };
   const d=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   toast(d.ok?'✅ Salvo!':'❌ Erro ao salvar',!d.ok);
@@ -1155,6 +1175,47 @@ function toggleScheduleFields(){
   const mode=document.getElementById('cfg-audio-mode')?.value;
   const sf=document.getElementById('schedule-fields');
   if(sf) sf.style.display=(mode==='schedule')?'block':'none';
+}
+
+// ── Noreply follow-up steps ──
+let _noreplySteps = [];
+function toggleNoreplyFields() {
+  document.getElementById('noreply-fields').style.display = document.getElementById('cfg-noreply-enabled').checked ? 'block' : 'none';
+}
+function renderNoreplySteps() {
+  const el = document.getElementById('noreply-steps-list');
+  if (!el) return;
+  el.innerHTML = _noreplySteps.map((s, i) => `
+    <div style="background:#f8f9fa;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:11px;font-weight:700;color:var(--wa-muted);">ETAPA ${i+1}</span>
+        <button onclick="removeNoreplyStep(${i})" style="margin-left:auto;background:none;border:none;cursor:pointer;color:var(--wa-muted);font-size:14px;padding:0;">✕</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input type="number" value="${s.delayHours}" min="0.5" step="0.5" onchange="_noreplySteps[${i}].delayHours=+this.value" style="width:65px;padding:5px 8px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;">
+        <span style="font-size:12px;color:#555;">horas sem resposta</span>
+      </div>
+      <textarea onchange="_noreplySteps[${i}].message=this.value" rows="2" style="width:100%;padding:7px 10px;background:#f0f2f5;border:1.5px solid transparent;border-radius:6px;font-size:12px;outline:none;font-family:inherit;resize:vertical;">${s.message||''}</textarea>
+    </div>
+  `).join('');
+}
+function addNoreplyStep() {
+  _noreplySteps.push({ delayHours: 2, message: '' });
+  renderNoreplySteps();
+}
+function removeNoreplyStep(i) {
+  _noreplySteps.splice(i, 1);
+  renderNoreplySteps();
+}
+
+// ── CRM lead delete ──
+async function deleteLead() {
+  const phone = document.getElementById('lead-modal-phone').value;
+  if (!confirm('Excluir este lead e todos seus follow-ups?')) return;
+  await fetch('/api/crm/leads/' + encodeURIComponent(phone), { method: 'DELETE' });
+  document.getElementById('lead-modal').classList.remove('open');
+  toast('Lead excluído');
+  loadCRM();
 }
 
 async function loadElevenLabsCredits(){

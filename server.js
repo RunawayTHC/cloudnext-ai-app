@@ -53,8 +53,12 @@ async function initDB() {
     CREATE TABLE IF NOT EXISTS conversations (
       phone TEXT PRIMARY KEY,
       history JSONB NOT NULL DEFAULT '[]',
-      updated_at BIGINT NOT NULL
+      updated_at BIGINT NOT NULL,
+      last_ai_at BIGINT,
+      last_user_at BIGINT
     );
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_ai_at BIGINT;
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_user_at BIGINT;
     CREATE TABLE IF NOT EXISTS crm_leads (
       phone TEXT PRIMARY KEY,
       name TEXT DEFAULT '',
@@ -178,6 +182,8 @@ const state = {
     businessHoursEnd: '18:00',
     businessHoursMsg: 'Nosso horário de atendimento é de segunda a sexta, das 8h às 18h. Em breve um atendente irá te chamar!',
     restrictAIOutsideHours: false,
+    noreplyFollowupEnabled: false,
+    noreplyFollowupSteps: [],
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
@@ -217,6 +223,8 @@ async function loadConfig() {
   if (map.businessHoursEnd)               state.config.businessHoursEnd   = map.businessHoursEnd;
   if (map.businessHoursMsg)               state.config.businessHoursMsg   = map.businessHoursMsg;
   if (map.restrictAIOutsideHours !== undefined) state.config.restrictAIOutsideHours = map.restrictAIOutsideHours === 'true';
+  if (map.noreplyFollowupEnabled !== undefined) state.config.noreplyFollowupEnabled = map.noreplyFollowupEnabled === 'true';
+  if (map.noreplyFollowupSteps) { try { state.config.noreplyFollowupSteps = JSON.parse(map.noreplyFollowupSteps); } catch {} }
 }
 
 async function saveConfig() {
@@ -246,6 +254,8 @@ async function saveConfig() {
     ['businessHoursEnd',         cfg.businessHoursEnd || '18:00'],
     ['businessHoursMsg',         cfg.businessHoursMsg || ''],
     ['restrictAIOutsideHours',   String(cfg.restrictAIOutsideHours)],
+    ['noreplyFollowupEnabled',   String(cfg.noreplyFollowupEnabled || false)],
+    ['noreplyFollowupSteps',     JSON.stringify(cfg.noreplyFollowupSteps || [])],
   ];
   for (const [key, value] of entries) {
     await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
@@ -695,6 +705,8 @@ async function processMessage(phone, messageText, sendTarget = null, rawPhone = 
         await addLog('message', 'out', phone, cleanResponse.slice(0, 200), { format: 'text' });
       } else throw new Error(`sendText failed: ${JSON.stringify(r.data)}`);
     }
+    // Track last AI send time for noreply follow-up
+    pool.query('UPDATE conversations SET last_ai_at=$1 WHERE phone=$2', [Date.now(), phone]).catch(() => {});
     // Background CRM analysis (non-blocking)
     analyzeCRM(phone, [...history, { role: 'user', text: messageText }, { role: 'model', text: cleanResponse.replace(/^\*.+?\*:\s*\n\n/, '') }]).catch(() => {});
   } catch (err) {
@@ -777,6 +789,8 @@ app.post('/webhook', async (req, res) => {
     }
 
     trackContact(rawPhone, msg.pushName, remoteJid);
+    // Track last user message time for noreply follow-up
+    pool.query('UPDATE conversations SET last_user_at=$1 WHERE phone=$2', [Date.now(), phone]).catch(() => {});
     const isBlocked = state.config.ignoredNumbers?.includes(rawPhone) || (phone !== rawPhone && state.config.ignoredNumbers?.includes(phone));
     console.log(`[MSG] rawPhone="${rawPhone}" phone="${phone}" blocked=${isBlocked}`);
     if (isBlocked) return;
@@ -839,7 +853,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
@@ -1015,6 +1029,15 @@ app.patch('/api/crm/leads/:phone', async (req, res) => {
       updates.push(`updated_at=$${i++}`); vals.push(Date.now()); vals.push(phone);
       await pool.query(`UPDATE crm_leads SET ${updates.join(',')} WHERE phone=$${i}`, vals);
     }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.delete('/api/crm/leads/:phone', async (req, res) => {
+  try {
+    const phone = decodeURIComponent(req.params.phone);
+    await pool.query('DELETE FROM crm_leads WHERE phone=$1', [phone]);
+    await pool.query('DELETE FROM crm_followups WHERE phone=$1', [phone]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
@@ -1209,10 +1232,20 @@ app.listen(PORT, async () => {
   await loadRelayConfig();
   console.log('✅ Config, stats e relay carregados do banco');
 
+  // Restore in-memory contactsMap from crm_leads (persists across redeploys)
+  try {
+    const { rows: savedContacts } = await pool.query('SELECT phone, name, raw_jid, profile_pic FROM crm_leads');
+    savedContacts.forEach(r => {
+      contactsMap.set(r.phone, { name: r.name || '', rawJid: r.raw_jid || '', profilePic: r.profile_pic || null, firstSeen: Date.now(), lastSeen: Date.now() });
+    });
+    console.log(`✅ ${savedContacts.length} contatos restaurados do CRM`);
+  } catch (e) { console.log('[contactsMap restore]', e.message); }
+
   // Follow-up cron: check every minute
   setInterval(async () => {
     try {
       const now = Date.now();
+      // 1. Scheduled follow-ups (appointment reminders)
       const { rows } = await pool.query('SELECT * FROM crm_followups WHERE sent=false AND scheduled_at <= $1', [now]);
       for (const f of rows) {
         const contact = contactsMap.get(f.phone);
@@ -1220,6 +1253,36 @@ app.listen(PORT, async () => {
         await sendText(sendTarget || f.phone, f.message);
         await pool.query('UPDATE crm_followups SET sent=true WHERE id=$1', [f.id]);
         await addLog('info', 'system', f.phone, `Follow-up disparado: ${f.message.slice(0,60)}`).catch(()=>{});
+      }
+      // 2. Noreply follow-ups (no client response after AI message)
+      if (state.config.noreplyFollowupEnabled && state.config.noreplyFollowupSteps?.length) {
+        const { rows: convs } = await pool.query(
+          'SELECT phone, last_ai_at, last_user_at FROM conversations WHERE last_ai_at IS NOT NULL'
+        );
+        for (const conv of convs) {
+          const lastAiAt = Number(conv.last_ai_at);
+          const lastUserAt = Number(conv.last_user_at) || 0;
+          if (lastAiAt <= lastUserAt) continue; // client already replied
+          const contact = contactsMap.get(conv.phone);
+          const sendTarget = contact?.rawJid?.includes('@lid') ? contact.rawJid : null;
+          for (let si = 0; si < state.config.noreplyFollowupSteps.length; si++) {
+            const step = state.config.noreplyFollowupSteps[si];
+            const threshold = (step.delayHours || 1) * 3600000;
+            if (now - lastAiAt < threshold) continue;
+            const { rows: already } = await pool.query(
+              'SELECT id FROM crm_followups WHERE phone=$1 AND type=$2 AND created_at > $3',
+              [conv.phone, `noreply_${si}`, lastAiAt]
+            );
+            if (already.length) continue;
+            const msg = (step.message || '').replace(/\{nome\}/gi, contact?.name || '');
+            await sendText(sendTarget || conv.phone, msg);
+            await pool.query(
+              'INSERT INTO crm_followups (id, phone, scheduled_at, message, type, sent, created_at) VALUES ($1,$2,$3,$4,$5,true,$6)',
+              [uuidv4(), conv.phone, now, msg, `noreply_${si}`, now]
+            );
+            await addLog('info', 'system', conv.phone, `Noreply follow-up #${si+1}: ${msg.slice(0,60)}`).catch(()=>{});
+          }
+        }
       }
     } catch (err) { console.log(`[FOLLOWUP CRON] ${err.message}`); }
   }, 60000);
