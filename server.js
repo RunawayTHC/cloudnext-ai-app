@@ -286,6 +286,32 @@ async function updateWebhook() {
   return r;
 }
 
+// ── LID → PHONE RESOLUTION ──
+const lidToPhoneCache = new Map(); // lid_number -> real phone number
+
+async function buildLidMapping() {
+  const r = await evoRequest('GET', `/contacts/getAll/${activeInstance()}`).catch(() => null);
+  if (!r?.ok || !Array.isArray(r.data)) return;
+  let mapped = 0;
+  for (const c of r.data) {
+    if (c.lid) {
+      const lid   = String(c.lid).replace(/@lid$/, '').split(':')[0];
+      const phone = String(c.id  || '').replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').split(':')[0];
+      if (lid && phone && lid !== phone) { lidToPhoneCache.set(lid, phone); mapped++; }
+    }
+  }
+  if (mapped) console.log(`[LID MAP] ${mapped} contatos mapeados`);
+}
+
+async function resolvePhone(rawPhone, remoteJid) {
+  if (!remoteJid?.includes('@lid')) return rawPhone;
+  if (lidToPhoneCache.has(rawPhone)) return lidToPhoneCache.get(rawPhone);
+  await buildLidMapping();
+  const resolved = lidToPhoneCache.get(rawPhone);
+  if (resolved) console.log(`[LID] ${rawPhone} → ${resolved}`);
+  return resolved || rawPhone;
+}
+
 // ── HUMAN PAUSE SYSTEM ──
 const humanPaused = new Map();   // phone -> timestamp of last human interaction
 const aiSentIds = new Set();     // message IDs sent by the AI (to distinguish from human sends)
@@ -522,8 +548,9 @@ app.post('/webhook', async (req, res) => {
     if (!msg) return;
 
     const remoteJid = msg.key?.remoteJid || msg.remoteJid;
-    const phone = remoteJid?.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').replace(/@lid$/, '').split(':')[0];
-    if (!phone || remoteJid?.includes('@g.us')) return;
+    const rawPhone = remoteJid?.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').replace(/@lid$/, '').split(':')[0];
+    if (!rawPhone || remoteJid?.includes('@g.us')) return;
+    const phone = await resolvePhone(rawPhone, remoteJid);
 
     const isFromMe = msg.key?.fromMe || msg.fromMe;
 
