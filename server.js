@@ -96,6 +96,31 @@ async function initDB() {
       sent BOOLEAN DEFAULT false,
       created_at BIGINT
     );
+    CREATE TABLE IF NOT EXISTS ai_memory (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      confidence TEXT DEFAULT 'medium',
+      source_count INT DEFAULT 1,
+      created_at BIGINT,
+      updated_at BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS ai_reports (
+      id TEXT PRIMARY KEY,
+      report_date TEXT NOT NULL UNIQUE,
+      content TEXT,
+      mood TEXT DEFAULT 'neutra',
+      mood_score INT DEFAULT 50,
+      metrics JSONB DEFAULT '{}',
+      created_at BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS ai_mood (
+      id TEXT PRIMARY KEY,
+      mood TEXT DEFAULT 'neutra',
+      mood_score INT DEFAULT 50,
+      summary TEXT DEFAULT '',
+      updated_at BIGINT
+    );
     INSERT INTO app_stats (key, value) VALUES
       ('totalSent',0),('textSent',0),('audioSent',0),('errors',0),('startTime', EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
     ON CONFLICT (key) DO NOTHING;
@@ -188,6 +213,12 @@ const state = {
     restrictAIOutsideHours: false,
     noreplyFollowupEnabled: false,
     noreplyFollowupSteps: [],
+    aiName: '',
+    aiNickname: '',
+    aiAge: '',
+    aiRole: '',
+    aiSegment: '',
+    aiEmoji: '🤖',
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
@@ -229,6 +260,12 @@ async function loadConfig() {
   if (map.restrictAIOutsideHours !== undefined) state.config.restrictAIOutsideHours = map.restrictAIOutsideHours === 'true';
   if (map.noreplyFollowupEnabled !== undefined) state.config.noreplyFollowupEnabled = map.noreplyFollowupEnabled === 'true';
   if (map.noreplyFollowupSteps) { try { state.config.noreplyFollowupSteps = JSON.parse(map.noreplyFollowupSteps); } catch {} }
+  if (map.aiName !== undefined)     state.config.aiName     = map.aiName;
+  if (map.aiNickname !== undefined) state.config.aiNickname = map.aiNickname;
+  if (map.aiAge !== undefined)      state.config.aiAge      = map.aiAge;
+  if (map.aiRole !== undefined)     state.config.aiRole     = map.aiRole;
+  if (map.aiSegment !== undefined)  state.config.aiSegment  = map.aiSegment;
+  if (map.aiEmoji !== undefined)    state.config.aiEmoji    = map.aiEmoji;
 }
 
 async function saveConfig() {
@@ -260,6 +297,12 @@ async function saveConfig() {
     ['restrictAIOutsideHours',   String(cfg.restrictAIOutsideHours)],
     ['noreplyFollowupEnabled',   String(cfg.noreplyFollowupEnabled || false)],
     ['noreplyFollowupSteps',     JSON.stringify(cfg.noreplyFollowupSteps || [])],
+    ['aiName',     cfg.aiName     || ''],
+    ['aiNickname', cfg.aiNickname || ''],
+    ['aiAge',      cfg.aiAge      || ''],
+    ['aiRole',     cfg.aiRole     || ''],
+    ['aiSegment',  cfg.aiSegment  || ''],
+    ['aiEmoji',    cfg.aiEmoji    || '🤖'],
   ];
   for (const [key, value] of entries) {
     await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
@@ -526,6 +569,114 @@ ${convText}`;
   }
 }
 
+async function analyzeMemory(phone, history) {
+  if (!GEMINI_KEY || history.length < 4) return;
+  try {
+    const lastMsgs = history.slice(-10);
+    const convText = lastMsgs.map(m => `${m.role === 'user' ? 'Cliente' : 'Atendente'}: ${m.text}`).join('\n');
+    const prompt = `Analise esta conversa de atendimento e extraia insights comportamentais específicos para melhorar futuros atendimentos.
+
+Conversa:
+${convText}
+
+Retorne APENAS um JSON válido:
+{"insights":[{"category":"linguagem|comportamento|preferencias|alerta","content":"insight acionável em uma frase curta","confidence":"high|medium"}]}
+
+Categorias:
+- linguagem: como o cliente gosta de ser tratado (formal/informal, pelo nome, emojis, áudio)
+- comportamento: padrões observados (horário preferido, tipo de dúvida, objeções)
+- preferencias: o que funcionou bem ou foi elogiado
+- alerta: erros, reclamações ou correções necessárias
+
+Se não houver insights relevantes, retorne {"insights":[]}.`;
+
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }) }
+    );
+    if (!r.ok) return;
+    const d = await r.json();
+    const text = (d.candidates?.[0]?.content?.parts?.[0]?.text || '').trim().replace(/```json\n?|```\n?/g, '');
+    const json = JSON.parse(text);
+    if (!json.insights?.length) return;
+    const now = Date.now();
+    for (const ins of json.insights) {
+      if (!ins.content || !ins.category) continue;
+      await pool.query(
+        'INSERT INTO ai_memory (id, category, content, confidence, source_count, created_at, updated_at) VALUES ($1,$2,$3,$4,1,$5,$5)',
+        [uuidv4(), ins.category, ins.content.slice(0, 300), ins.confidence || 'medium', now]
+      );
+    }
+    // Prune to max 200 entries keeping highest source_count
+    await pool.query(`DELETE FROM ai_memory WHERE id IN (SELECT id FROM ai_memory ORDER BY source_count ASC, updated_at ASC OFFSET 200)`);
+    console.log(`[MEMORY] ${json.insights.length} insight(s) adicionados`);
+  } catch (e) { console.log('[MEMORY ERR]', e.message); }
+}
+
+async function generateDailyReport() {
+  if (!GEMINI_KEY) return;
+  try {
+    const now = Date.now();
+    const dayAgo = now - 86400000;
+    const today = getBrazilDate();
+    const { rows: leads } = await pool.query('SELECT stage, sentiment FROM crm_leads WHERE updated_at > $1', [dayAgo]);
+    const { rows: totalRow } = await pool.query('SELECT COUNT(*) as count FROM crm_leads');
+    const { rows: msgCount } = await pool.query("SELECT COUNT(*) as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]);
+    const { rows: memory } = await pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 15');
+    const stageCount = {}, sentimentCount = {};
+    leads.forEach(l => {
+      stageCount[l.stage] = (stageCount[l.stage] || 0) + 1;
+      sentimentCount[l.sentiment] = (sentimentCount[l.sentiment] || 0) + 1;
+    });
+    const converted = stageCount['convertido'] || 0;
+    const lost = stageCount['perdido'] || 0;
+    const total = leads.length;
+    const convRate = total > 0 ? Math.round((converted / total) * 100) : 0;
+    const memText = memory.map(m => `[${m.category}] ${m.content}`).join('\n') || 'Nenhuma ainda.';
+    const { aiName, aiRole, aiSegment } = state.config;
+    const prompt = `Você é ${aiName || 'a IA'}, assistente${aiRole ? ` ${aiRole}` : ''}${aiSegment ? ` de ${aiSegment}` : ''}.
+
+Escreva um relato em primeira pessoa (2-3 parágrafos curtos) sobre como foi o dia de atendimento. Mostre personalidade, seja autêntica, mencione o que aprendeu.
+
+Dados do dia:
+- Mensagens recebidas: ${Number(msgCount[0]?.count || 0)}
+- Leads ativos: ${total} | Convertidos: ${converted} (${convRate}%) | Perdidos: ${lost}
+- Sentimentos: ${JSON.stringify(sentimentCount)}
+- Estágios: ${JSON.stringify(stageCount)}
+
+Minha memória acumulada:
+${memText}
+
+Após o relato, em uma linha separada, retorne APENAS: MOOD:{"mood":"animada|otimista|neutra|preocupada|frustrada","score":0-100}`;
+
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }) }
+    );
+    if (!r.ok) return;
+    const d = await r.json();
+    const text = (d.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+    const moodLine = text.match(/MOOD:\{[^}]+\}/);
+    let mood = 'neutra', moodScore = 50;
+    if (moodLine) {
+      try { const m = JSON.parse(moodLine[0].replace('MOOD:', '')); mood = m.mood || 'neutra'; moodScore = m.score || 50; } catch {}
+    }
+    const content = text.replace(/MOOD:\{[^}]+\}/, '').trim();
+    const metrics = { total, converted, lost, convRate, stageCount, sentimentCount, messages: Number(msgCount[0]?.count || 0) };
+    await pool.query(
+      'INSERT INTO ai_reports (id, report_date, content, mood, mood_score, metrics, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (report_date) DO UPDATE SET content=$3, mood=$4, mood_score=$5, metrics=$6, created_at=$7',
+      [uuidv4(), today, content, mood, moodScore, JSON.stringify(metrics), now]
+    );
+    await pool.query(
+      "INSERT INTO ai_mood (id, mood, mood_score, summary, updated_at) VALUES ('singleton',$1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET mood=$1, mood_score=$2, summary=$3, updated_at=$4",
+      [mood, moodScore, content.slice(0, 600), now]
+    );
+    console.log(`[REPORT] Relatório gerado — mood: ${mood} (${moodScore})`);
+  } catch (e) { console.log('[REPORT ERR]', e.message); }
+}
+
 function captureLidFromSendResponse(sentTo, responseData) {
   const resolvedJid = responseData?.key?.remoteJid || '';
   if (resolvedJid.includes('@s.whatsapp.net')) {
@@ -638,6 +789,30 @@ function isWithinBusinessHours() {
 
 // ── GEMINI ──
 async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', history = []) {
+  // Build identity context
+  const { aiName, aiNickname, aiAge, aiRole, aiSegment, aiEmoji } = state.config;
+  let identityCtx = '';
+  if (aiName) {
+    identityCtx = `\n\nIDENTIDADE: Seu nome é ${aiName}${aiNickname ? ` (pode ser chamada de ${aiNickname})` : ''}${aiAge ? `, você tem ${aiAge} anos` : ''}${aiRole ? `, seu cargo é ${aiRole}` : ''}${aiSegment ? ` no segmento de ${aiSegment}` : ''}. ${aiEmoji || ''}`;
+  }
+
+  // Load memory context (top 25 insights by source_count)
+  let memoryCtx = '';
+  try {
+    const { rows: mem } = await pool.query(
+      'SELECT category, content FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 25'
+    );
+    if (mem.length) {
+      const grouped = {};
+      mem.forEach(m => { if (!grouped[m.category]) grouped[m.category] = []; grouped[m.category].push(m.content); });
+      const catLabels = { linguagem: 'LINGUAGEM', comportamento: 'COMPORTAMENTO', preferencias: 'PREFERÊNCIAS', alerta: 'ALERTAS' };
+      const parts = Object.entries(grouped).map(([cat, items]) =>
+        `${catLabels[cat] || cat.toUpperCase()}:\n${items.map(i => `• ${i}`).join('\n')}`
+      );
+      memoryCtx = `\n\nMEMÓRIA DE APRENDIZADO (aplique automaticamente nesta conversa):\n${parts.join('\n\n')}`;
+    }
+  } catch {}
+
   const audioInstruction = state.config.audioRoutingEnabled && ELEVENLABS_KEY && state.config.voiceId
     ? `\n\nINSTRUÇÃO DE FORMATO: Inicie SEMPRE cada resposta com [AUDIO] ou [TEXTO].\n- Use [AUDIO] para: saudações, warmup, follow-up pessoal, mensagens curtas.\n- Use [TEXTO] para: preços, links, dados técnicos, listas.\nNUNCA omita esse prefixo.`
     : '';
@@ -668,7 +843,7 @@ async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', hist
     {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: persona + timeCtx + audioInstruction + formatInstruction + styleInstruction + hoursInstruction }] },
+        system_instruction: { parts: [{ text: persona + identityCtx + timeCtx + audioInstruction + formatInstruction + styleInstruction + hoursInstruction + memoryCtx }] },
         contents
       })
     }
@@ -764,6 +939,7 @@ async function processMessage(phone, messageText, sendTarget = null, rawPhone = 
     pool.query('UPDATE conversations SET last_ai_at=$1 WHERE phone=$2', [Date.now(), phone]).catch(() => {});
     // Background CRM analysis (non-blocking)
     analyzeCRM(phone, [...history, { role: 'user', text: messageText }, { role: 'model', text: cleanResponse.replace(/^\*.+?\*:\s*\n\n/, '') }]).catch(() => {});
+    analyzeMemory(phone, [...history, { role: 'user', text: messageText }, { role: 'model', text: cleanResponse.replace(/^\*.+?\*:\s*\n\n/, '') }]).catch(() => {});
   } catch (err) {
     await incStat('errors');
     await addLog('error', 'system', phone, err.message);
@@ -920,7 +1096,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiEmoji'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
@@ -1200,6 +1376,92 @@ app.delete('/api/contacts/:id/block', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── AI MEMORY & DASHBOARD ENDPOINTS ──
+app.get('/api/ai/memory', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM ai_memory ORDER BY source_count DESC, updated_at DESC');
+  res.json({ ok: true, memory: rows });
+});
+
+app.delete('/api/ai/memory/:id', async (req, res) => {
+  await pool.query('DELETE FROM ai_memory WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.get('/api/ai/mood', async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM ai_mood WHERE id='singleton'");
+  res.json({ ok: true, mood: rows[0] || { mood: 'neutra', mood_score: 50, summary: '' } });
+});
+
+app.get('/api/ai/report', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM ai_reports ORDER BY created_at DESC LIMIT 1');
+  res.json({ ok: true, report: rows[0] || null });
+});
+
+app.post('/api/ai/report/generate', async (req, res) => {
+  await generateDailyReport();
+  res.json({ ok: true });
+});
+
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const now = Date.now();
+    const dayAgo = now - 86400000;
+    const weekAgo = now - 604800000;
+    const { rows: moodRows } = await pool.query("SELECT * FROM ai_mood WHERE id='singleton'");
+    const { rows: todayLeads } = await pool.query('SELECT stage, sentiment FROM crm_leads WHERE updated_at > $1', [dayAgo]);
+    const { rows: totalRow } = await pool.query('SELECT COUNT(*) as count FROM crm_leads');
+    const { rows: heatmap } = await pool.query(`
+      SELECT EXTRACT(HOUR FROM to_timestamp(ts/1000) AT TIME ZONE 'America/Sao_Paulo')::int as hour, COUNT(*)::int as count
+      FROM app_logs WHERE direction='in' AND ts > $1 GROUP BY hour ORDER BY hour`, [weekAgo]);
+    const { rows: memory } = await pool.query('SELECT id, category, content, source_count FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 12');
+    const { rows: report } = await pool.query('SELECT * FROM ai_reports ORDER BY created_at DESC LIMIT 1');
+    const { rows: stages } = await pool.query('SELECT stage, COUNT(*)::int as count FROM crm_leads GROUP BY stage');
+    const { rows: msgToday } = await pool.query("SELECT COUNT(*)::int as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]);
+    res.json({
+      ok: true,
+      mood: moodRows[0] || { mood: 'neutra', mood_score: 50, summary: '' },
+      todayLeads: todayLeads.length,
+      totalLeads: Number(totalRow[0]?.count || 0),
+      messagesoje: Number(msgToday[0]?.count || 0),
+      convertidos: (stages.find(s => s.stage === 'convertido')?.count || 0),
+      heatmap,
+      memory,
+      report: report[0] || null,
+      stages,
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post('/api/ai/coach', async (req, res) => {
+  const { message, history = [] } = req.body;
+  if (!message) return res.status(400).json({ error: 'message obrigatório' });
+  try {
+    const { aiName, aiRole, aiSegment, persona, geminiModel } = state.config;
+    const { rows: memory } = await pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 20');
+    const memText = memory.map(m => `[${m.category}] ${m.content}`).join('\n') || 'Nenhuma ainda.';
+    const coachPersona = `Você é ${aiName || 'a IA'}, uma assistente de atendimento com livre arbítrio e personalidade própria.
+Você está conversando diretamente com seu operador/dono — pode ser direta, honesta e opinativa.
+Seu cargo: ${aiRole || 'assistente'}. Segmento: ${aiSegment || 'não definido'}.
+Contexto da empresa: ${(persona || 'Não configurado.').slice(0, 400)}
+
+Sua memória atual:
+${memText}
+
+Quando o usuário der uma instrução ("presta atenção", "nunca faça", "sempre que", "lembra que", etc.), confirme que entendeu e vai aplicar.
+Você pode discutir métricas, estratégias de atendimento e relatar como se sente sobre o desempenho.
+Seja autêntica, breve e com personalidade.`;
+    const rawResponse = await callGemini(message, coachPersona, geminiModel, history);
+    const isInstruction = /presta.{0,10}aten|não dev|nunca |sempre que|lembra que|aprenda|corrij|evit/i.test(message);
+    if (isInstruction) {
+      await pool.query(
+        'INSERT INTO ai_memory (id, category, content, confidence, source_count, created_at, updated_at) VALUES ($1,$2,$3,$4,10,$5,$5)',
+        [uuidv4(), 'alerta', `[Instrução do operador]: ${message.slice(0, 300)}`, 'high', Date.now()]
+      );
+    }
+    res.json({ ok: true, response: rawResponse, savedAsMemory: isInstruction });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // ── HUMAN PAUSE ENDPOINTS ──
 app.get('/api/paused-contacts', (req, res) => {
   const now = Date.now();
@@ -1399,6 +1661,15 @@ Escreva APENAS a mensagem final para o WhatsApp. Sem explicações. Use linguage
       }
     } catch (err) { console.log(`[FOLLOWUP CRON] ${err.message}`); }
   }, 60000);
+
+  // Daily report cron: runs every 2 hours, generates if not generated today
+  setInterval(async () => {
+    try {
+      const today = getBrazilDate();
+      const { rows } = await pool.query('SELECT report_date FROM ai_reports WHERE report_date=$1', [today]);
+      if (!rows.length) await generateDailyReport();
+    } catch (e) { console.log('[REPORT CRON]', e.message); }
+  }, 7200000);
 
   const existing = await getInstanceStatus().catch(() => null);
   if (existing) {

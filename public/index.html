@@ -329,6 +329,64 @@
     .appt-name { font-size:13px; font-weight:600; margin-bottom:3px; }
     .appt-notes { font-size:12px; color:var(--wa-muted); }
     .followup-badge { font-size:10px; background:rgba(139,92,246,.1); color:#8b5cf6; border-radius:10px; padding:2px 8px; font-weight:600; }
+
+    /* ── DASHBOARD ── */
+    .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:20px; color:white; display:flex; align-items:center; gap:16px; margin-bottom:14px; }
+    .dash-avatar { width:64px; height:64px; border-radius:50%; background:rgba(255,255,255,.2); display:flex; align-items:center; justify-content:center; font-size:28px; flex-shrink:0; position:relative; }
+    .dash-avatar-ring { position:absolute; inset:-4px; border-radius:50%; border:3px solid rgba(255,255,255,.5); animation:pulse-ring 2s infinite; }
+    @keyframes pulse-ring { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.06)} }
+    .dash-mood-badge { display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,.2); padding:3px 10px; border-radius:20px; font-size:12px; margin-top:4px; }
+    .dash-hero-text h3 { font-size:16px; font-weight:700; margin-bottom:2px; }
+    .dash-hero-text p { font-size:13px; opacity:.88; line-height:1.5; }
+    .dash-grid { display:grid; grid-template-columns:1fr 320px; gap:14px; align-items:start; }
+    @media(max-width:1000px){.dash-grid{grid-template-columns:1fr}}
+    .heatmap-grid { display:grid; grid-template-columns:repeat(24,1fr); gap:2px; margin-top:10px; }
+    .heatmap-cell { height:28px; border-radius:4px; background:#e0f5ef; position:relative; cursor:default; transition:opacity .15s; }
+    .heatmap-cell:hover::after { content:attr(data-tip); position:absolute; bottom:110%; left:50%; transform:translateX(-50%); background:#111; color:white; font-size:10px; padding:2px 6px; border-radius:4px; white-space:nowrap; z-index:10; }
+    .heatmap-labels { display:grid; grid-template-columns:repeat(24,1fr); gap:2px; margin-top:3px; }
+    .heatmap-label { font-size:9px; color:var(--wa-muted); text-align:center; }
+    .memory-list { display:flex; flex-direction:column; gap:6px; }
+    .memory-item { display:flex; align-items:flex-start; gap:8px; padding:8px; background:#f8f9fa; border-radius:8px; font-size:12px; }
+    .memory-cat { font-size:10px; font-weight:700; padding:2px 7px; border-radius:20px; flex-shrink:0; margin-top:1px; }
+    .cat-linguagem { background:rgba(59,130,246,.12); color:var(--blue); }
+    .cat-comportamento { background:rgba(139,92,246,.12); color:#8b5cf6; }
+    .cat-preferencias { background:rgba(0,168,132,.12); color:var(--wa-green); }
+    .cat-alerta { background:rgba(239,68,68,.1); color:var(--red); }
+    .memory-del { margin-left:auto; background:none; border:none; cursor:pointer; color:#ccc; font-size:14px; line-height:1; padding:0 2px; }
+    .memory-del:hover { color:var(--red); }
+    .funnel-bar { display:flex; align-items:center; gap:8px; margin-bottom:5px; font-size:12px; }
+    .funnel-fill { height:18px; border-radius:4px; min-width:4px; transition:width .4s; }
+    .funnel-label { width:120px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wa-muted); }
+    .funnel-count { width:24px; text-align:right; font-weight:700; color:var(--wa-text); }
+
+    /* ── FLOATING AI COACH ── */
+    .ai-float { position:fixed; bottom:24px; right:24px; z-index:1000; }
+    .ai-float-btn { width:52px; height:52px; border-radius:50%; background:var(--wa-green); color:white; border:none; font-size:22px; cursor:pointer; box-shadow:0 4px 16px rgba(0,168,132,.5); display:flex; align-items:center; justify-content:center; transition:transform .15s; }
+    .ai-float-btn:hover { transform:scale(1.08); }
+    .ai-coach-modal { position:fixed; bottom:86px; right:24px; width:340px; height:480px; background:white; border-radius:16px; box-shadow:0 8px 32px rgba(0,0,0,.18); display:flex; flex-direction:column; z-index:999; overflow:hidden; display:none; }
+    .ai-coach-modal.open { display:flex; }
+    .ai-coach-header { background:var(--wa-header); color:var(--wa-text-inv); padding:12px 16px; display:flex; align-items:center; gap:10px; flex-shrink:0; }
+    .ai-coach-header h4 { flex:1; font-size:14px; }
+    .ai-coach-header button { background:none; border:none; color:var(--wa-muted); cursor:pointer; font-size:18px; }
+    .ai-coach-msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:8px; background:var(--wa-chat-bg); }
+    .ai-coach-msg { max-width:85%; padding:8px 12px; border-radius:10px; font-size:13px; line-height:1.5; }
+    .ai-coach-msg.user { background:var(--wa-green-sent); align-self:flex-end; border-bottom-right-radius:2px; }
+    .ai-coach-msg.ai { background:white; align-self:flex-start; border-bottom-left-radius:2px; box-shadow:0 1px 2px rgba(0,0,0,.07); }
+    .ai-coach-saved { font-size:10px; color:var(--wa-green); margin-top:3px; }
+    .ai-coach-input { padding:10px; display:flex; gap:8px; border-top:1px solid #f0f2f5; background:white; flex-shrink:0; }
+    .ai-coach-input input { flex:1; padding:8px 12px; border:1.5px solid #e0e0e0; border-radius:20px; font-size:13px; outline:none; font-family:inherit; }
+    .ai-coach-input input:focus { border-color:var(--wa-green); }
+    .ai-coach-input button { background:var(--wa-green); color:white; border:none; border-radius:50%; width:36px; height:36px; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; }
+
+    /* ── IDENTITY CARD ── */
+    .identity-grid { display:grid; grid-template-columns:80px 1fr; gap:16px; align-items:start; }
+    .avatar-picker { display:flex; flex-direction:column; align-items:center; gap:8px; }
+    .avatar-display { width:64px; height:64px; border-radius:50%; background:linear-gradient(135deg,#005c4b,#00a884); display:flex; align-items:center; justify-content:center; font-size:28px; cursor:pointer; border:3px solid transparent; transition:border-color .15s; }
+    .avatar-display:hover { border-color:var(--wa-green); }
+    .emoji-picker-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+    .emoji-opt { font-size:20px; cursor:pointer; padding:4px; border-radius:8px; transition:background .15s; }
+    .emoji-opt:hover { background:#f0f2f5; }
+    .identity-fields { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
   </style>
 </head>
 <body>
@@ -374,37 +432,72 @@
 
   <main class="main">
 
-    <!-- ═══ OVERVIEW ═══ -->
+    <!-- ═══ OVERVIEW / DASHBOARD ═══ -->
     <div class="page active" id="page-overview">
       <div class="topbar">
         <div class="topbar-icon" style="background:rgba(0,168,132,.15);">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="var(--wa-green)"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
         </div>
         <div class="topbar-info">
-          <h3>Visão Geral</h3>
+          <h3>Painel</h3>
           <p id="conn-label">Carregando...</p>
         </div>
         <div class="topbar-actions">
           <span id="conn-number" style="font-size:12px;color:var(--wa-muted);margin-right:8px;"></span>
-          <span id="uptime-label" style="font-size:12px;color:var(--wa-muted);"></span>
+          <span id="uptime-label" style="font-size:12px;color:var(--wa-muted);margin-right:12px;"></span>
+          <label class="toggle" title="IA Ativa"><input type="checkbox" id="cfg-ai-enabled" checked onchange="fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aiEnabled:this.checked})}).then(()=>toast(this.checked?'✅ IA ativada':'⏸ IA desativada'))"><span class="slider"></span></label>
         </div>
       </div>
       <div class="scroll-area" style="background:#f0f2f5;">
-        <div class="card" style="margin-bottom:14px;">
-          <div class="toggle-row">
-            <div class="toggle-info"><h4>IA Ativa</h4><p>Ativa ou desativa as respostas automáticas da IA</p></div>
-            <label class="toggle"><input type="checkbox" id="cfg-ai-enabled" checked onchange="fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aiEnabled:this.checked})}).then(()=>toast(this.checked?'✅ IA ativada':'⏸ IA desativada'))"><span class="slider"></span></label>
+        <!-- Hero Mood Banner -->
+        <div class="dash-hero" id="dash-hero">
+          <div class="dash-avatar" id="dash-avatar">
+            <div class="dash-avatar-ring"></div>
+            <span id="dash-emoji">🤖</span>
           </div>
+          <div class="dash-hero-text">
+            <h3 id="dash-ai-name">Carregando...</h3>
+            <div class="dash-mood-badge" id="dash-mood-badge">● neutra</div>
+            <p id="dash-summary" style="margin-top:6px;">Aguardando dados do dia...</p>
+          </div>
+          <button class="btn" style="background:rgba(255,255,255,.2);color:white;margin-left:auto;align-self:flex-start;font-size:12px;" onclick="generateReport()">↻ Gerar relatório</button>
         </div>
-        <div class="stats-row">
-          <div class="stat"><div class="stat-label">Total Enviados</div><div class="stat-value c-green" id="st-total">0</div><div class="stat-sub">respondidas</div></div>
-          <div class="stat"><div class="stat-label">Texto</div><div class="stat-value c-blue" id="st-text">0</div><div class="stat-sub">em texto</div></div>
-          <div class="stat"><div class="stat-label">Áudio TTS</div><div class="stat-value c-yellow" id="st-audio">0</div><div class="stat-sub">em áudio</div></div>
+        <!-- Quick Stats -->
+        <div class="stats-row" style="margin-bottom:14px;">
+          <div class="stat"><div class="stat-label">Mensagens Hoje</div><div class="stat-value c-green" id="st-msg-hoje">0</div><div class="stat-sub">recebidas</div></div>
+          <div class="stat"><div class="stat-label">Leads Ativos</div><div class="stat-value c-blue" id="st-leads-total">0</div><div class="stat-sub">no CRM</div></div>
+          <div class="stat"><div class="stat-label">Convertidos</div><div class="stat-value c-green" id="st-convertidos">0</div><div class="stat-sub">finalizados</div></div>
           <div class="stat"><div class="stat-label">Erros</div><div class="stat-value c-red" id="st-errors">0</div><div class="stat-sub">falhas</div></div>
         </div>
-        <div class="card">
-          <div class="card-label">Atividade Recente</div>
-          <div class="log-list" id="recent-logs"><div class="log-empty">Nenhuma atividade.</div></div>
+        <div class="dash-grid">
+          <div>
+            <!-- Heatmap -->
+            <div class="card" style="margin-bottom:14px;">
+              <div class="card-label">Mapa de Calor — Mensagens por Hora (últimos 7 dias)</div>
+              <div class="heatmap-grid" id="heatmap-grid"></div>
+              <div class="heatmap-labels" id="heatmap-labels"></div>
+            </div>
+            <!-- Funil CRM -->
+            <div class="card" style="margin-bottom:14px;">
+              <div class="card-label">Funil de Leads</div>
+              <div id="crm-funnel" style="margin-top:8px;"></div>
+            </div>
+            <!-- Recent logs -->
+            <div class="card">
+              <div class="card-label">Atividade Recente</div>
+              <div class="log-list" id="recent-logs"><div class="log-empty">Nenhuma atividade.</div></div>
+            </div>
+          </div>
+          <div>
+            <!-- Memory -->
+            <div class="card" style="margin-bottom:14px;">
+              <div class="card-label" style="display:flex;align-items:center;justify-content:space-between;">
+                <span>Memória da IA</span>
+                <span id="memory-count" style="font-size:11px;color:var(--wa-muted);"></span>
+              </div>
+              <div class="memory-list" id="memory-list"><div style="font-size:12px;color:var(--wa-muted);padding:8px 0;">Aguardando aprendizados...</div></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -540,6 +633,57 @@
 
         <div class="training-grid">
           <div>
+            <div class="card" style="margin-bottom:14px;">
+              <div class="card-label">Identidade da IA</div>
+              <div class="identity-grid">
+                <div class="avatar-picker">
+                  <div class="avatar-display" id="avatar-display" onclick="toggleEmojiPicker()">
+                    <span id="avatar-emoji-display">🤖</span>
+                  </div>
+                  <div class="hint" style="text-align:center;">Avatar</div>
+                  <div id="emoji-picker" style="display:none;position:absolute;z-index:10;background:white;border-radius:12px;padding:8px;box-shadow:0 4px 20px rgba(0,0,0,.15);">
+                    <div class="emoji-picker-row">
+                      <span class="emoji-opt" onclick="selectEmoji('🤖')">🤖</span>
+                      <span class="emoji-opt" onclick="selectEmoji('👩‍💼')">👩‍💼</span>
+                      <span class="emoji-opt" onclick="selectEmoji('🧑‍💼')">🧑‍💼</span>
+                      <span class="emoji-opt" onclick="selectEmoji('👩')">👩</span>
+                      <span class="emoji-opt" onclick="selectEmoji('🧑')">🧑</span>
+                      <span class="emoji-opt" onclick="selectEmoji('⭐')">⭐</span>
+                      <span class="emoji-opt" onclick="selectEmoji('🌟')">🌟</span>
+                      <span class="emoji-opt" onclick="selectEmoji('💼')">💼</span>
+                      <span class="emoji-opt" onclick="selectEmoji('☀️')">☀️</span>
+                      <span class="emoji-opt" onclick="selectEmoji('🌱')">🌱</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div class="identity-fields">
+                    <div class="fg" style="margin:0 0 10px;">
+                      <label>Nome</label>
+                      <input type="text" id="cfg-ai-name" placeholder="Ex: Eduarda">
+                    </div>
+                    <div class="fg" style="margin:0 0 10px;">
+                      <label>Apelido</label>
+                      <input type="text" id="cfg-ai-nickname" placeholder="Ex: Edu">
+                    </div>
+                    <div class="fg" style="margin:0 0 10px;">
+                      <label>Idade</label>
+                      <input type="text" id="cfg-ai-age" placeholder="Ex: 28">
+                    </div>
+                    <div class="fg" style="margin:0 0 10px;">
+                      <label>Cargo / Função</label>
+                      <input type="text" id="cfg-ai-role" placeholder="Ex: SDR">
+                    </div>
+                    <div class="fg" style="margin:0 0 10px;">
+                      <label>Segmento</label>
+                      <input type="text" id="cfg-ai-segment" placeholder="Ex: Energia Solar">
+                    </div>
+                    <div class="fg" style="margin:0;"></div>
+                  </div>
+                  <div class="hint">Essas informações definem a personalidade e identidade da IA em todos os atendimentos.</div>
+                </div>
+              </div>
+            </div>
             <div class="card">
               <div class="card-label">Persona & Comportamento</div>
               <div class="fg">
@@ -1015,6 +1159,27 @@
 
 <div id="toast"></div>
 
+  <!-- ═══ FLOATING AI COACH ═══ -->
+  <div class="ai-float">
+    <div class="ai-coach-modal" id="ai-coach-modal">
+      <div class="ai-coach-header">
+        <span id="coach-avatar-emoji" style="font-size:20px;">🤖</span>
+        <h4 id="coach-header-name">Conversar com a IA</h4>
+        <button onclick="toggleAICoach()">✕</button>
+      </div>
+      <div class="ai-coach-msgs" id="ai-coach-msgs">
+        <div class="ai-coach-msg ai">Olá! Sou sua assistente. Pode me dar instruções, perguntar sobre métricas ou conversar sobre os atendimentos.</div>
+      </div>
+      <div class="ai-coach-input">
+        <input type="text" id="ai-coach-input" placeholder="Dê uma instrução ou faça uma pergunta..." onkeydown="if(event.key==='Enter')sendAICoach()">
+        <button onclick="sendAICoach()">➤</button>
+      </div>
+    </div>
+    <button class="ai-float-btn" onclick="toggleAICoach()" title="Conversar com a IA">
+      <span id="float-btn-emoji">🤖</span>
+    </button>
+  </div>
+
 <script>
 const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const now = () => new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
@@ -1029,6 +1194,7 @@ document.querySelectorAll('.s-item').forEach(el => {
     if(el.dataset.page==='logs') loadLogs();
     if(el.dataset.page==='training'){ loadConfig(); loadElevenLabsCredits(); loadContacts(); }
     if(el.dataset.page==='crm'){ loadCRM(); }
+    if(el.dataset.page==='overview'){ loadDashboard(); }
   });
 });
 
@@ -1053,10 +1219,8 @@ async function poll() {
     const h=Math.floor(d.uptime/3600),m=Math.floor((d.uptime%3600)/60),s=d.uptime%60;
     document.getElementById('uptime-label').textContent=`⏱ ${h}h ${m}m ${s}s`;
 
-    document.getElementById('st-total').textContent=d.stats?.totalSent||0;
-    document.getElementById('st-text').textContent=d.stats?.textSent||0;
-    document.getElementById('st-audio').textContent=d.stats?.audioSent||0;
-    document.getElementById('st-errors').textContent=d.stats?.errors||0;
+    const stErr = document.getElementById('st-errors');
+    if (stErr) stErr.textContent = d.stats?.errors || 0;
 
     const chip=document.getElementById('inst-chip');
     if(chip){chip.className='chip '+(open?'chip-green':conn?'chip-yellow':'chip-red');document.getElementById('inst-chip-txt').textContent=st;}
@@ -1128,6 +1292,19 @@ async function loadConfig(){
   document.getElementById('noreply-fields').style.display = noreplyEnabled ? 'block' : 'none';
   _noreplySteps = Array.isArray(_cfg.noreplyFollowupSteps) ? _cfg.noreplyFollowupSteps : [];
   renderNoreplySteps();
+  // Identity fields
+  if (_cfg.aiName !== undefined) {
+    document.getElementById('cfg-ai-name').value = _cfg.aiName || '';
+    document.getElementById('cfg-ai-nickname').value = _cfg.aiNickname || '';
+    document.getElementById('cfg-ai-age').value = _cfg.aiAge || '';
+    document.getElementById('cfg-ai-role').value = _cfg.aiRole || '';
+    document.getElementById('cfg-ai-segment').value = _cfg.aiSegment || '';
+    const emoji = _cfg.aiEmoji || '🤖';
+    document.getElementById('avatar-emoji-display').textContent = emoji;
+    let inp = document.getElementById('cfg-ai-emoji-val');
+    if (!inp) { inp = document.createElement('input'); inp.type='hidden'; inp.id='cfg-ai-emoji-val'; document.body.appendChild(inp); }
+    inp.value = emoji;
+  }
 }
 document.getElementById('cfg-biz-enabled').addEventListener('change', function(){
   document.getElementById('biz-fields').style.display = this.checked ? 'block' : 'none';
@@ -1165,6 +1342,12 @@ async function saveConfig(){
     restrictAIOutsideHours:document.getElementById('cfg-restrict-hours').checked,
     noreplyFollowupEnabled:document.getElementById('cfg-noreply-enabled').checked,
     noreplyFollowupSteps:_noreplySteps,
+    aiName:     document.getElementById('cfg-ai-name')?.value || '',
+    aiNickname: document.getElementById('cfg-ai-nickname')?.value || '',
+    aiAge:      document.getElementById('cfg-ai-age')?.value || '',
+    aiRole:     document.getElementById('cfg-ai-role')?.value || '',
+    aiSegment:  document.getElementById('cfg-ai-segment')?.value || '',
+    aiEmoji:    document.getElementById('cfg-ai-emoji-val')?.value || '🤖',
   };
   const d=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   toast(d.ok?'✅ Salvo!':'❌ Erro ao salvar',!d.ok);
@@ -1980,10 +2163,175 @@ async function deactivateRelay() {
   if (d.ok) updateRelayUI({ enabled: false });
 }
 
+// ── DASHBOARD ──
+const MOOD_EMOJIS = { animada:'🚀', otimista:'😊', neutra:'😐', preocupada:'😟', frustrada:'😤' };
+const MOOD_COLORS = { animada:'#10b981', otimista:'#00a884', neutra:'#8696a0', preocupada:'#f59e0b', frustrada:'#ef4444' };
+const STAGE_COLORS = { novo:'#8696a0', atendimento:'#3b82f6', aguardando:'#f59e0b', qualificado:'#00a884', agendado:'#8b5cf6', humano:'#ef4444', convertido:'#10b981', perdido:'#6b7280' };
+const STAGE_NAMES  = { novo:'Novo', atendimento:'Em Atendimento', aguardando:'Aguardando', qualificado:'Qualificado', agendado:'Agendado', humano:'Atend. Humano', convertido:'Convertido', perdido:'Perdido' };
+
+async function loadDashboard() {
+  try {
+    const d = await fetch('/api/dashboard').then(r=>r.json());
+    if (!d.ok) return;
+    const cfg = await fetch('/api/config').then(r=>r.json());
+    const aiName = cfg.aiName || 'IA';
+    const aiEmoji = cfg.aiEmoji || '🤖';
+    // Hero
+    const mood = d.mood?.mood || 'neutra';
+    const moodScore = d.mood?.mood_score || 50;
+    document.getElementById('dash-ai-name').textContent = aiName + (cfg.aiRole ? ` · ${cfg.aiRole}` : '');
+    document.getElementById('dash-emoji').textContent = aiEmoji;
+    document.getElementById('float-btn-emoji').textContent = aiEmoji;
+    document.getElementById('coach-avatar-emoji').textContent = aiEmoji;
+    document.getElementById('coach-header-name').textContent = aiName;
+    const moodBadge = document.getElementById('dash-mood-badge');
+    moodBadge.textContent = `${MOOD_EMOJIS[mood]||'😐'} ${mood} · ${moodScore}%`;
+    moodBadge.style.background = `${MOOD_COLORS[mood]||'#8696a0'}33`;
+    const summary = d.report?.content || d.mood?.summary || 'Ainda não há relatório para hoje. Clique em "Gerar relatório".';
+    document.getElementById('dash-summary').textContent = summary.slice(0, 180) + (summary.length > 180 ? '...' : '');
+    // Stats
+    const msgEl = document.getElementById('st-msg-hoje');
+    msgEl.textContent = d.messagesoje ?? d.messagesHoje ?? 0;
+    document.getElementById('st-leads-total').textContent = d.totalLeads || 0;
+    document.getElementById('st-convertidos').textContent = d.convertidos || 0;
+    // Heatmap
+    renderHeatmap(d.heatmap || []);
+    // Funnel
+    renderFunnel(d.stages || []);
+    // Memory
+    renderDashMemory(d.memory || []);
+  } catch(e) { console.log('[DASH]', e); }
+}
+
+function renderHeatmap(data) {
+  const grid = document.getElementById('heatmap-grid');
+  const labels = document.getElementById('heatmap-labels');
+  if (!grid || !labels) return;
+  const map = {};
+  data.forEach(h => { map[h.hour] = h.count; });
+  const max = Math.max(...data.map(h => h.count), 1);
+  let gHtml = '', lHtml = '';
+  for (let h = 0; h < 24; h++) {
+    const count = map[h] || 0;
+    const intensity = count / max;
+    const bg = intensity === 0 ? '#e9edef' : `rgba(0,168,132,${0.15 + intensity * 0.85})`;
+    gHtml += `<div class="heatmap-cell" style="background:${bg}" data-tip="${h}h: ${count} msgs"></div>`;
+    lHtml += `<div class="heatmap-label">${h % 3 === 0 ? h+'h' : ''}</div>`;
+  }
+  grid.innerHTML = gHtml;
+  labels.innerHTML = lHtml;
+}
+
+function renderFunnel(stages) {
+  const el = document.getElementById('crm-funnel');
+  if (!el) return;
+  if (!stages.length) { el.innerHTML = '<div style="font-size:12px;color:var(--wa-muted);padding:8px 0;">Sem leads ainda.</div>'; return; }
+  const ORDER = ['novo','atendimento','aguardando','qualificado','agendado','humano','convertido','perdido'];
+  const sorted = [...stages].sort((a,b) => ORDER.indexOf(a.stage) - ORDER.indexOf(b.stage));
+  const max = Math.max(...stages.map(s => s.count), 1);
+  el.innerHTML = sorted.map(s => {
+    const w = Math.max(8, Math.round((s.count / max) * 100));
+    const color = STAGE_COLORS[s.stage] || '#8696a0';
+    return `<div class="funnel-bar">
+      <div class="funnel-label">${STAGE_NAMES[s.stage] || s.stage}</div>
+      <div class="funnel-fill" style="width:${w}%;background:${color};flex:1;"></div>
+      <div class="funnel-count">${s.count}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderDashMemory(memory) {
+  const el = document.getElementById('memory-list');
+  const cnt = document.getElementById('memory-count');
+  if (!el) return;
+  if (cnt) cnt.textContent = memory.length ? `${memory.length} insights` : '';
+  if (!memory.length) { el.innerHTML = '<div style="font-size:12px;color:var(--wa-muted);padding:8px 0;">A IA ainda não acumulou aprendizados.</div>'; return; }
+  el.innerHTML = memory.map(m => `
+    <div class="memory-item">
+      <span class="memory-cat cat-${m.category}">${m.category}</span>
+      <span style="flex:1;line-height:1.4;">${esc(m.content)}</span>
+      <span style="font-size:10px;color:var(--wa-muted);flex-shrink:0;">${m.source_count}x</span>
+      <button class="memory-del" onclick="deleteMemory('${m.id}')" title="Remover">✕</button>
+    </div>`).join('');
+}
+
+async function deleteMemory(id) {
+  await fetch(`/api/ai/memory/${id}`, { method: 'DELETE' });
+  loadDashboard();
+}
+
+async function generateReport() {
+  toast('Gerando relatório...');
+  await fetch('/api/ai/report/generate', { method: 'POST' });
+  await new Promise(r => setTimeout(r, 2000));
+  loadDashboard();
+}
+
+// ── AI COACH ──
+let _coachHistory = [];
+let _coachOpen = false;
+
+function toggleAICoach() {
+  _coachOpen = !_coachOpen;
+  document.getElementById('ai-coach-modal').classList.toggle('open', _coachOpen);
+  if (_coachOpen) document.getElementById('ai-coach-input').focus();
+}
+
+async function sendAICoach() {
+  const inp = document.getElementById('ai-coach-input');
+  const msg = inp.value.trim();
+  if (!msg) return;
+  inp.value = '';
+  appendCoachMsg(msg, 'user');
+  try {
+    const d = await fetch('/api/ai/coach', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, history: _coachHistory })
+    }).then(r => r.json());
+    _coachHistory.push({ role: 'user', text: msg });
+    const reply = d.response || 'Erro ao responder.';
+    appendCoachMsg(reply, 'ai', d.savedAsMemory);
+    _coachHistory.push({ role: 'model', text: reply });
+    if (_coachHistory.length > 20) _coachHistory = _coachHistory.slice(-20);
+    if (d.savedAsMemory) setTimeout(() => loadDashboard(), 1000);
+  } catch(e) { appendCoachMsg('Erro de conexão.', 'ai'); }
+}
+
+function appendCoachMsg(text, role, saved = false) {
+  const el = document.getElementById('ai-coach-msgs');
+  const div = document.createElement('div');
+  div.className = `ai-coach-msg ${role}`;
+  div.textContent = text;
+  if (saved) {
+    const s = document.createElement('div');
+    s.className = 'ai-coach-saved';
+    s.textContent = '✓ Salvo na memória';
+    div.appendChild(s);
+  }
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── IDENTITY / EMOJI ──
+function toggleEmojiPicker() {
+  const p = document.getElementById('emoji-picker');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+
+function selectEmoji(emoji) {
+  document.getElementById('avatar-emoji-display').textContent = emoji;
+  document.getElementById('emoji-picker').style.display = 'none';
+  let inp = document.getElementById('cfg-ai-emoji-val');
+  if (!inp) { inp = document.createElement('input'); inp.type='hidden'; inp.id='cfg-ai-emoji-val'; document.body.appendChild(inp); }
+  inp.value = emoji;
+}
+
 // ── INIT ──
 loadConfig();
 fetch('/api/relay/config').then(r=>r.json()).then(d=>updateRelayUI(d.relay)).catch(()=>{});
 poll();setInterval(poll,5000);
+loadDashboard();
 </script>
 </body>
 </html>
