@@ -390,9 +390,18 @@
     .av-opt.selected { border-color:var(--wa-green); box-shadow:0 0 0 2px rgba(0,168,132,.3); }
     .av-opt svg { width:100%; height:100%; }
     /* Dashboard avatar animated */
-    .dash-avatar { animation:av-float 3s ease-in-out infinite; }
-    @keyframes av-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
-    .dash-avatar svg { width:100%; height:100%; border-radius:50%; }
+    .dash-avatar img { width:100%; height:100%; border-radius:50%; object-fit:cover; transition:filter 0.7s ease; }
+    .dash-avatar { animation:mood-float 3s ease-in-out infinite; }
+    @keyframes mood-float   { 0%,100%{transform:translateY(0) scale(1)}   50%{transform:translateY(-6px) scale(1.03)} }
+    @keyframes mood-bounce  { 0%,100%{transform:translateY(0) scale(1)}   30%{transform:translateY(-10px) scale(1.08)} 60%{transform:translateY(-4px) scale(1.04)} }
+    @keyframes mood-shake   { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-5px)} 40%{transform:translateX(5px)} 60%{transform:translateX(-3px)} 80%{transform:translateX(3px)} }
+    @keyframes mood-wobble  { 0%,100%{transform:rotate(0deg)} 25%{transform:rotate(-4deg)} 75%{transform:rotate(4deg)} }
+    @keyframes mood-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+    .mood-animada   { animation:mood-bounce  0.9s ease-in-out infinite !important; }
+    .mood-otimista  { animation:mood-float   2.5s ease-in-out infinite !important; }
+    .mood-neutra    { animation:mood-breathe 4s ease-in-out infinite !important; }
+    .mood-preocupada{ animation:mood-wobble  2s ease-in-out infinite !important; }
+    .mood-frustrada { animation:mood-shake   0.6s ease-in-out infinite !important; }
     .identity-fields { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
   </style>
 </head>
@@ -656,18 +665,26 @@
                   <div class="fg" style="margin-top:8px;width:64px;">
                     <label style="font-size:9px;">Estilo</label>
                     <select id="cfg-avatar-style" onchange="previewAvatarStyle()" style="font-size:11px;padding:4px 6px;">
-                      <option value="adventurer">Aventureira</option>
-                      <option value="adventurer-neutral">Neutro</option>
-                      <option value="lorelei">Lorelei</option>
-                      <option value="pixel-art">Pixel Art</option>
-                      <option value="fun-emoji">Fun Emoji</option>
-                      <option value="bottts">Robô</option>
-                      <option value="croodles">Sketch</option>
-                      <option value="micah">Micah</option>
-                      <option value="notionists">Notion</option>
-                      <option value="open-peeps">Peeps</option>
-                      <option value="avataaars">Avataaars</option>
-                      <option value="big-ears">Big Ears</option>
+                      <optgroup label="── Anime ──">
+                        <option value="lorelei">Lorelei (Anime)</option>
+                        <option value="adventurer">Aventureira</option>
+                        <option value="avataaars">Avataaars</option>
+                        <option value="dylan">Dylan</option>
+                        <option value="micah">Micah</option>
+                        <option value="big-smile">Big Smile</option>
+                      </optgroup>
+                      <optgroup label="── RPG / Pixel ──">
+                        <option value="pixel-art">Pixel Art RPG</option>
+                        <option value="pixel-art-neutral">Pixel Art 2</option>
+                        <option value="bottts">Robô Sci-Fi</option>
+                        <option value="rings">Rings RPG</option>
+                      </optgroup>
+                      <optgroup label="── Outros ──">
+                        <option value="fun-emoji">Fun Emoji</option>
+                        <option value="open-peeps">Open Peeps</option>
+                        <option value="croodles">Sketch</option>
+                        <option value="notionists">Notion</option>
+                      </optgroup>
                     </select>
                   </div>
                 </div>
@@ -2368,12 +2385,17 @@ function previewAvatarStyle() {
 
 function applyMoodExpression(name, style, mood) {
   updateAvatarImages(name, style);
+  // CSS filter on the img
   const filter = MOOD_FILTERS[mood] || MOOD_FILTERS.neutra;
   const dashImg = document.getElementById('dash-avatar-img');
-  if (dashImg) {
-    dashImg.style.filter = filter;
-    dashImg.style.transition = 'filter 0.6s ease';
+  if (dashImg) dashImg.style.filter = filter;
+  // Animation class on the container
+  const dashAvatar = document.querySelector('.dash-avatar');
+  if (dashAvatar) {
+    dashAvatar.classList.remove('mood-animada','mood-otimista','mood-neutra','mood-preocupada','mood-frustrada');
+    dashAvatar.classList.add(`mood-${mood || 'neutra'}`);
   }
+  // Hero background
   const heroEl = document.getElementById('dash-hero');
   if (heroEl) {
     const colors = { animada:'135deg,#065f46,#059669', otimista:'135deg,#005c4b,#00a884', neutra:'135deg,#374151,#6b7280', preocupada:'135deg,#78350f,#d97706', frustrada:'135deg,#7f1d1d,#ef4444' };
