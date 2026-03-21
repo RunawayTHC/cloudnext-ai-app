@@ -549,6 +549,42 @@ async function sendText(phone, text) {
   return r;
 }
 
+async function transcribeAudioMessage(msg) {
+  try {
+    // Download audio from Evolution API
+    const r = await evoRequest('POST', `/chat/getBase64FromMediaMessage/${activeInstance()}`, {
+      message: { key: msg.key, messageTimestamp: msg.messageTimestamp, message: msg.message }
+    });
+    if (!r.ok || !r.data?.base64) return null;
+    const audioBase64 = r.data.base64;
+    const mimetype = r.data.mimetype || 'audio/ogg; codecs=opus';
+    const mimeType = mimetype.split(';')[0].trim();
+
+    // Transcribe with Gemini multimodal
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: 'Transcreva exatamente o conteúdo deste áudio em português. Retorne APENAS a transcrição, sem comentários adicionais.' },
+              { inline_data: { mime_type: mimeType, data: audioBase64 } }
+            ]
+          }]
+        })
+      }
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+  } catch (e) {
+    console.log('[TRANSCRIBE ERR]', e.message);
+    return null;
+  }
+}
+
 async function sendAudio(phone, audioBase64, mimetype = 'audio/mpeg') {
   const r = await evoRequest('POST', `/message/sendMedia/${activeInstance()}`, {
     number: phone, mediatype: 'audio', mimetype, media: audioBase64, fileName: 'audio.mp3'
@@ -699,14 +735,14 @@ async function processMessage(phone, messageText, sendTarget = null, rawPhone = 
       { role: 'model', text: cleanResponse }
     ]);
 
-    // Prepend signature AFTER saving history
+    const isAudio = shouldSendAudio(rawResponse);
+
+    // Prepend signature AFTER saving history — only for text messages, never for audio
     const { signatureEnabled, signatureName, signatureRole } = state.config;
-    if (signatureEnabled && signatureName) {
+    if (!isAudio && signatureEnabled && signatureName) {
       const sig = signatureRole ? `*${signatureName}* - ${signatureRole}:` : `*${signatureName}*:`;
       cleanResponse = `${sig}\n\n${cleanResponse}`;
     }
-
-    const isAudio = shouldSendAudio(rawResponse);
 
     const dest = sendTarget || phone;
     if (isAudio) {
@@ -814,14 +850,26 @@ app.post('/webhook', async (req, res) => {
     console.log(`[MSG] rawPhone="${rawPhone}" phone="${phone}" blocked=${isBlocked}`);
     if (isBlocked) return;
 
-    const messageText =
+    const textContent =
       msg.message?.conversation ||
       msg.message?.extendedTextMessage?.text ||
-      msg.message?.imageMessage?.caption ||
-      (msg.message?.audioMessage ? '[O cliente enviou um áudio de voz. Responda de forma natural como se tivesse ouvido o áudio, pedindo para ele repetir por texto se necessário.]' : null);
+      msg.message?.imageMessage?.caption || null;
+
     // For @lid contacts, pass the original JID as sendTarget so the reply reaches the right device
     const sendTarget = remoteJid?.includes('@lid') ? remoteJid : null;
-    if (messageText) processMessage(phone, messageText, sendTarget, rawPhone);
+
+    if (textContent) {
+      processMessage(phone, textContent, sendTarget, rawPhone);
+    } else if (msg.message?.audioMessage && GEMINI_KEY) {
+      transcribeAudioMessage(msg).then(transcription => {
+        const messageText = transcription
+          ? `[áudio transcrito]: ${transcription}`
+          : '[O cliente enviou um áudio, mas não foi possível transcrever. Peça para ele repetir por texto.]';
+        processMessage(phone, messageText, sendTarget, rawPhone);
+      }).catch(() => {
+        processMessage(phone, '[O cliente enviou um áudio de voz. Peça para ele repetir por texto.]', sendTarget, rawPhone);
+      });
+    }
   }
 });
 
