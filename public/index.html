@@ -1301,8 +1301,8 @@ function renderLogs(logs,id){
   const el=document.getElementById(id);
   if(!logs?.length){el.innerHTML='<div class="log-empty">Nenhum log.</div>';return;}
   el.innerHTML=logs.map(l=>{
-    const t=new Date(l.ts).toLocaleTimeString('pt-BR');
-    const dt=new Date(l.ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    const t=new Date(Number(l.ts)).toLocaleTimeString('pt-BR');
+    const dt=new Date(Number(l.ts)).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
     const bc=l.direction==='in'?'b-in':l.direction==='out'?'b-out':l.type==='error'?'b-err':l.type==='ai'?'b-ai':'b-sys';
     const dl=l.direction==='in'?'▼ recv':l.direction==='out'?'▲ sent':'sys';
     return`<div class="log-item"><span class="log-time">${dt} ${t}</span><span class="badge ${bc}">${dl}</span><span class="log-phone">${l.phone||'—'}</span><span>${l.extra?.format==='audio'?'🔊 ':''}${esc(l.content)}</span></div>`;
