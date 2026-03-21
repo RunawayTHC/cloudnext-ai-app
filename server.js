@@ -1407,27 +1407,51 @@ app.get('/api/dashboard', async (req, res) => {
     const now = Date.now();
     const dayAgo = now - 86400000;
     const weekAgo = now - 604800000;
-    const { rows: moodRows } = await pool.query("SELECT * FROM ai_mood WHERE id='singleton'");
-    const { rows: todayLeads } = await pool.query('SELECT stage, sentiment FROM crm_leads WHERE updated_at > $1', [dayAgo]);
-    const { rows: totalRow } = await pool.query('SELECT COUNT(*) as count FROM crm_leads');
-    const { rows: heatmap } = await pool.query(`
-      SELECT EXTRACT(HOUR FROM to_timestamp(ts/1000) AT TIME ZONE 'America/Sao_Paulo')::int as hour, COUNT(*)::int as count
-      FROM app_logs WHERE direction='in' AND ts > $1 GROUP BY hour ORDER BY hour`, [weekAgo]);
-    const { rows: memory } = await pool.query('SELECT id, category, content, source_count FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 12');
-    const { rows: report } = await pool.query('SELECT * FROM ai_reports ORDER BY created_at DESC LIMIT 1');
-    const { rows: stages } = await pool.query('SELECT stage, COUNT(*)::int as count FROM crm_leads GROUP BY stage');
-    const { rows: msgToday } = await pool.query("SELECT COUNT(*)::int as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]);
+    const [moodRows, totalRow, heatmap, memory, report, stages, msgToday, metricsRow, semRespostaRow] = await Promise.all([
+      pool.query("SELECT * FROM ai_mood WHERE id='singleton'"),
+      pool.query('SELECT COUNT(*)::int as count FROM crm_leads'),
+      pool.query(`SELECT EXTRACT(HOUR FROM to_timestamp(ts/1000) AT TIME ZONE 'America/Sao_Paulo')::int as hour, COUNT(*)::int as count
+        FROM app_logs WHERE direction='in' AND ts > $1 GROUP BY hour ORDER BY hour`, [weekAgo]),
+      pool.query('SELECT id, category, content, source_count FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 12'),
+      pool.query('SELECT * FROM ai_reports ORDER BY created_at DESC LIMIT 1'),
+      pool.query('SELECT stage, COUNT(*)::int as count FROM crm_leads GROUP BY stage'),
+      pool.query("SELECT COUNT(*)::int as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]),
+      pool.query(`SELECT
+        COUNT(*) FILTER (WHERE updated_at > $1)::int as leads_hoje,
+        COUNT(*) FILTER (WHERE stage='qualificado')::int as qualificados,
+        COUNT(*) FILTER (WHERE stage='agendado')::int as agendados,
+        COUNT(*) FILTER (WHERE stage='convertido')::int as convertidos,
+        COUNT(*) FILTER (WHERE stage='humano')::int as humanos,
+        COUNT(*) FILTER (WHERE stage='perdido')::int as perdidos,
+        COUNT(*) FILTER (WHERE stage='atendimento')::int as em_atendimento,
+        COUNT(*) FILTER (WHERE stage='aguardando')::int as aguardando,
+        COUNT(*) FILTER (WHERE stage='novo')::int as novos
+      FROM crm_leads`, [dayAgo]),
+      // Sem resposta: AI enviou por último e cliente não respondeu (últimas 48h)
+      pool.query(`SELECT COUNT(*)::int as count FROM conversations
+        WHERE last_ai_at IS NOT NULL AND last_ai_at > $1
+        AND (last_user_at IS NULL OR last_ai_at > last_user_at)`, [now - 172800000]),
+    ]);
+    const m = metricsRow.rows[0] || {};
     res.json({
       ok: true,
-      mood: moodRows[0] || { mood: 'neutra', mood_score: 50, summary: '' },
-      todayLeads: todayLeads.length,
-      totalLeads: Number(totalRow[0]?.count || 0),
-      messagesoje: Number(msgToday[0]?.count || 0),
-      convertidos: (stages.find(s => s.stage === 'convertido')?.count || 0),
-      heatmap,
-      memory,
-      report: report[0] || null,
-      stages,
+      mood: moodRows.rows[0] || { mood: 'neutra', mood_score: 50, summary: '' },
+      totalLeads: totalRow.rows[0]?.count || 0,
+      messagesHoje: msgToday.rows[0]?.count || 0,
+      leadsHoje: m.leads_hoje || 0,
+      qualificados: m.qualificados || 0,
+      agendados: m.agendados || 0,
+      convertidos: m.convertidos || 0,
+      humanos: m.humanos || 0,
+      perdidos: m.perdidos || 0,
+      emAtendimento: m.em_atendimento || 0,
+      aguardando: m.aguardando || 0,
+      novos: m.novos || 0,
+      semResposta: semRespostaRow.rows[0]?.count || 0,
+      heatmap: heatmap.rows,
+      memory: memory.rows,
+      report: report.rows[0] || null,
+      stages: stages.rows,
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -1437,19 +1461,49 @@ app.post('/api/ai/coach', async (req, res) => {
   if (!message) return res.status(400).json({ error: 'message obrigatório' });
   try {
     const { aiName, aiRole, aiSegment, persona, geminiModel } = state.config;
-    const { rows: memory } = await pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 20');
-    const memText = memory.map(m => `[${m.category}] ${m.content}`).join('\n') || 'Nenhuma ainda.';
-    const coachPersona = `Você é ${aiName || 'a IA'}, uma assistente de atendimento com livre arbítrio e personalidade própria.
-Você está conversando diretamente com seu operador/dono — pode ser direta, honesta e opinativa.
-Seu cargo: ${aiRole || 'assistente'}. Segmento: ${aiSegment || 'não definido'}.
-Contexto da empresa: ${(persona || 'Não configurado.').slice(0, 400)}
+    const now = Date.now();
+    const dayAgo = now - 86400000;
+    const today = getBrazilDate();
+    // Fetch REAL metrics to prevent hallucination
+    const [memRows, metricsRow, msgRow, semRespostaRow] = await Promise.all([
+      pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 20'),
+      pool.query(`SELECT
+        COUNT(*) FILTER (WHERE updated_at > $1)::int as leads_hoje,
+        COUNT(*) FILTER (WHERE stage='qualificado')::int as qualificados,
+        COUNT(*) FILTER (WHERE stage='agendado')::int as agendados,
+        COUNT(*) FILTER (WHERE stage='convertido')::int as convertidos,
+        COUNT(*) FILTER (WHERE stage='humano')::int as humanos,
+        COUNT(*) FILTER (WHERE stage='perdido')::int as perdidos,
+        COUNT(*) FILTER (WHERE stage='atendimento')::int as em_atendimento,
+        COUNT(*)::int as total FROM crm_leads`, [dayAgo]),
+      pool.query("SELECT COUNT(*)::int as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]),
+      pool.query(`SELECT COUNT(*)::int as count FROM conversations WHERE last_ai_at IS NOT NULL AND last_ai_at > $1 AND (last_user_at IS NULL OR last_ai_at > last_user_at)`, [now - 172800000]),
+    ]);
+    const m = metricsRow.rows[0] || {};
+    const memText = memRows.rows.map(r => `[${r.category}] ${r.content}`).join('\n') || 'Nenhuma ainda.';
+    const metricsBlock = `\n\n═══ DADOS REAIS DE HOJE (${today}) — USE APENAS ESTES NÚMEROS ═══
+• Mensagens recebidas: ${msgRow.rows[0]?.count || 0}
+• Leads movimentados hoje: ${m.leads_hoje || 0}
+• Total de leads no CRM: ${m.total || 0}
+• Em atendimento: ${m.em_atendimento || 0}
+• Qualificados: ${m.qualificados || 0}
+• Agendados: ${m.agendados || 0}
+• Convertidos: ${m.convertidos || 0}
+• Atendimento humano: ${m.humanos || 0}
+• Perdidos: ${m.perdidos || 0}
+• Aguardando resposta do cliente: ${semRespostaRow.rows[0]?.count || 0}
+═══════════════════════════════════════════
+IMPORTANTE: Nunca invente ou estime dados. Se um número for 0, diga que é 0. Responda com base EXCLUSIVAMENTE nos dados acima.`;
+    const coachPersona = `Você é ${aiName || 'a IA'}, assistente de atendimento com livre arbítrio e personalidade própria.
+Está conversando com seu operador/dono. Seja direta, honesta e com personalidade.
+Cargo: ${aiRole || 'assistente'}. Segmento: ${aiSegment || 'não definido'}.
+Contexto: ${(persona || '').slice(0, 300)}
 
-Sua memória atual:
+Memória acumulada:
 ${memText}
 
-Quando o usuário der uma instrução ("presta atenção", "nunca faça", "sempre que", "lembra que", etc.), confirme que entendeu e vai aplicar.
-Você pode discutir métricas, estratégias de atendimento e relatar como se sente sobre o desempenho.
-Seja autêntica, breve e com personalidade.`;
+Quando receber instruções ("nunca faça", "sempre que", "presta atenção"), confirme e aplique.
+Seja breve e autêntica.${metricsBlock}`;
     const rawResponse = await callGemini(message, coachPersona, geminiModel, history);
     const isInstruction = /presta.{0,10}aten|não dev|nunca |sempre que|lembra que|aprenda|corrij|evit/i.test(message);
     if (isInstruction) {
