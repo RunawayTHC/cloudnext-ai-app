@@ -219,6 +219,7 @@ const state = {
     aiRole: '',
     aiSegment: '',
     aiAvatarStyle: 'adventurer',
+    aiCharacter: 'Mage.glb',
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
@@ -266,6 +267,7 @@ async function loadConfig() {
   if (map.aiRole !== undefined)     state.config.aiRole     = map.aiRole;
   if (map.aiSegment !== undefined)    state.config.aiSegment    = map.aiSegment;
   if (map.aiAvatarStyle !== undefined) state.config.aiAvatarStyle = map.aiAvatarStyle;
+  if (map.aiCharacter   !== undefined) state.config.aiCharacter   = map.aiCharacter;
 }
 
 async function saveConfig() {
@@ -1096,7 +1098,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiAvatarStyle'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiAvatarStyle','aiCharacter'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
