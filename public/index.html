@@ -331,9 +331,10 @@
     .followup-badge { font-size:10px; background:rgba(139,92,246,.1); color:#8b5cf6; border-radius:10px; padding:2px 8px; font-weight:600; }
 
     /* ── DASHBOARD ── */
-    .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:20px; color:white; display:flex; align-items:center; gap:16px; margin-bottom:14px; }
-    .dash-avatar { width:64px; height:64px; border-radius:50%; background:rgba(255,255,255,.2); display:flex; align-items:center; justify-content:center; font-size:28px; flex-shrink:0; position:relative; }
-    .dash-avatar-ring { position:absolute; inset:-4px; border-radius:50%; border:3px solid rgba(255,255,255,.5); animation:pulse-ring 2s infinite; }
+    .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:16px 20px; color:white; display:flex; align-items:flex-end; gap:16px; margin-bottom:14px; overflow:hidden; position:relative; min-height:140px; }
+    .dash-avatar-3d { width:110px; height:160px; flex-shrink:0; position:relative; margin-bottom:-16px; }
+    .dash-avatar-3d canvas { width:110px!important; height:160px!important; display:block; }
+    .dash-avatar-ring { display:none; }
     @keyframes pulse-ring { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.06)} }
     .dash-mood-badge { display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,.2); padding:3px 10px; border-radius:20px; font-size:12px; margin-top:4px; }
     .dash-hero-text h3 { font-size:16px; font-weight:700; margin-bottom:2px; }
@@ -390,10 +391,10 @@
     .av-opt.selected { border-color:var(--wa-green); box-shadow:0 0 0 2px rgba(0,168,132,.3); }
     .av-opt svg { width:100%; height:100%; }
     /* Dashboard avatar animated */
-    .dash-avatar img { width:100%; height:100%; border-radius:50%; object-fit:cover; transition:filter 0.7s ease; animation:av-pulse 3s ease-in-out infinite; }
     @keyframes av-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
     .identity-fields { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
   </style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <div class="app">
@@ -457,9 +458,8 @@
       <div class="scroll-area" style="background:#f0f2f5;">
         <!-- Hero Mood Banner -->
         <div class="dash-hero" id="dash-hero">
-          <div class="dash-avatar" id="dash-avatar" style="background:none;overflow:visible;">
-            <div class="dash-avatar-ring"></div>
-            <img id="dash-avatar-img" src="" alt="avatar" style="width:64px;height:64px;border-radius:50%;object-fit:cover;transition:filter .4s;">
+          <div class="dash-avatar-3d" id="dash-avatar-3d">
+            <canvas id="avatar-canvas" width="110" height="160"></canvas>
           </div>
           <div class="dash-hero-text">
             <h3 id="dash-ai-name">Carregando...</h3>
@@ -2375,10 +2375,8 @@ function previewAvatarStyle() {
 
 function applyMoodExpression(name, style, mood) {
   updateAvatarImages(name, style);
-  // CSS filter on the img
-  const filter = MOOD_FILTERS[mood] || MOOD_FILTERS.neutra;
-  const dashImg = document.getElementById('dash-avatar-img');
-  if (dashImg) dashImg.style.filter = filter;
+  // Trigger 3D character animation
+  if (window.setCharacterMood) window.setCharacterMood(mood);
   // Hero background
   const heroEl = document.getElementById('dash-hero');
   if (heroEl) {
@@ -2396,10 +2394,111 @@ function applyMoodExpression(name, style, mood) {
 }
 
 // ── INIT ──
+// setCharacterMood is set by the Three.js module after load
+window.setCharacterMood = () => {};
 loadConfig();
 fetch('/api/relay/config').then(r=>r.json()).then(d=>updateRelayUI(d.relay)).catch(()=>{});
 poll();setInterval(poll,5000);
 loadDashboard();
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const canvas = document.getElementById('avatar-canvas');
+if (!canvas) throw new Error('avatar-canvas not found');
+
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(110, 160, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = false;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 110 / 160, 0.1, 50);
+camera.position.set(0, 1.1, 3.2);
+camera.lookAt(0, 0.8, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 2.5));
+const sun = new THREE.DirectionalLight(0xfff8e7, 3);
+sun.position.set(1.5, 3, 2);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xaaccff, 1);
+fill.position.set(-2, 1, -1);
+scene.add(fill);
+
+const loader = new GLTFLoader();
+let mixer = null, allClips = {}, currentAction = null, ready = false;
+let pendingMood = 'neutra';
+
+const MOOD_ANIMS = {
+  animada:    { name: 'Jump_Full_Short', loop: false },
+  otimista:   { name: 'Idle_B',         loop: true  },
+  neutra:     { name: 'Idle_A',         loop: true  },
+  preocupada: { name: 'Use_Item',       loop: true  },
+  frustrada:  { name: 'Hit_A',          loop: false },
+};
+
+function playAnim(mood) {
+  const cfg = MOOD_ANIMS[mood] || MOOD_ANIMS.neutra;
+  const clip = allClips[cfg.name] || allClips['Idle_A'];
+  if (!clip || !mixer) return;
+  const next = mixer.clipAction(clip);
+  next.setLoop(cfg.loop ? THREE.LoopRepeat : THREE.LoopOnce, 1);
+  if (!cfg.loop) next.clampWhenFinished = true;
+  if (currentAction && currentAction !== next) {
+    next.reset().setEffectiveWeight(1).fadeIn(0.5);
+    currentAction.fadeOut(0.5);
+  } else if (!currentAction) {
+    next.reset().play();
+  }
+  currentAction = next;
+  // After one-shot anim, fall back to Idle_A
+  if (!cfg.loop) {
+    mixer.addEventListener('finished', function onFin(e) {
+      if (e.action === next) {
+        mixer.removeEventListener('finished', onFin);
+        playAnim('neutra');
+      }
+    });
+  }
+}
+
+loader.load('/models/Mage.glb', gltf => {
+  const model = gltf.scene;
+  // Auto-center
+  const box = new THREE.Box3().setFromObject(model);
+  const center = box.getCenter(new THREE.Vector3());
+  model.position.sub(center);
+  model.position.y += (box.max.y - box.min.y) / 2;
+  scene.add(model);
+  mixer = new THREE.AnimationMixer(model);
+
+  loader.load('/models/Rig_Medium_General.glb', g1 => {
+    g1.animations.forEach(c => { allClips[c.name] = c; });
+    loader.load('/models/Rig_Medium_MovementBasic.glb', g2 => {
+      g2.animations.forEach(c => { allClips[c.name] = c; });
+      ready = true;
+      playAnim(pendingMood);
+      window.setCharacterMood = (mood) => {
+        if (ready) playAnim(mood);
+        else pendingMood = mood;
+      };
+    });
+  });
+}, undefined, err => console.warn('3D load error', err));
+
+let angle = 0;
+const clock = new THREE.Clock();
+(function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  if (mixer) mixer.update(dt);
+  angle += dt * 0.4;
+  scene.rotation.y = Math.sin(angle * 0.5) * 0.3; // gentle sway instead of full spin
+  renderer.render(scene, camera);
+})();
 </script>
 </body>
 </html>
