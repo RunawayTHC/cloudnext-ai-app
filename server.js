@@ -218,7 +218,7 @@ const state = {
     aiAge: '',
     aiRole: '',
     aiSegment: '',
-    aiEmoji: '🤖',
+    aiAvatarStyle: 'adventurer',
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
@@ -264,8 +264,8 @@ async function loadConfig() {
   if (map.aiNickname !== undefined) state.config.aiNickname = map.aiNickname;
   if (map.aiAge !== undefined)      state.config.aiAge      = map.aiAge;
   if (map.aiRole !== undefined)     state.config.aiRole     = map.aiRole;
-  if (map.aiSegment !== undefined)  state.config.aiSegment  = map.aiSegment;
-  if (map.aiEmoji !== undefined)    state.config.aiEmoji    = map.aiEmoji;
+  if (map.aiSegment !== undefined)    state.config.aiSegment    = map.aiSegment;
+  if (map.aiAvatarStyle !== undefined) state.config.aiAvatarStyle = map.aiAvatarStyle;
 }
 
 async function saveConfig() {
@@ -301,8 +301,8 @@ async function saveConfig() {
     ['aiNickname', cfg.aiNickname || ''],
     ['aiAge',      cfg.aiAge      || ''],
     ['aiRole',     cfg.aiRole     || ''],
-    ['aiSegment',  cfg.aiSegment  || ''],
-    ['aiEmoji',    cfg.aiEmoji    || '🤖'],
+    ['aiSegment',    cfg.aiSegment    || ''],
+    ['aiAvatarStyle', cfg.aiAvatarStyle || 'adventurer'],
   ];
   for (const [key, value] of entries) {
     await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
@@ -790,10 +790,10 @@ function isWithinBusinessHours() {
 // ── GEMINI ──
 async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', history = []) {
   // Build identity context
-  const { aiName, aiNickname, aiAge, aiRole, aiSegment, aiEmoji } = state.config;
+  const { aiName, aiNickname, aiAge, aiRole, aiSegment } = state.config;
   let identityCtx = '';
   if (aiName) {
-    identityCtx = `\n\nIDENTIDADE: Seu nome é ${aiName}${aiNickname ? ` (pode ser chamada de ${aiNickname})` : ''}${aiAge ? `, você tem ${aiAge} anos` : ''}${aiRole ? `, seu cargo é ${aiRole}` : ''}${aiSegment ? ` no segmento de ${aiSegment}` : ''}. ${aiEmoji || ''}`;
+    identityCtx = `\n\nIDENTIDADE: Seu nome é ${aiName}${aiNickname ? ` (pode ser chamada de ${aiNickname})` : ''}${aiAge ? `, você tem ${aiAge} anos` : ''}${aiRole ? `, seu cargo é ${aiRole}` : ''}${aiSegment ? ` no segmento de ${aiSegment}` : ''}.`;
   }
 
   // Load memory context (top 25 insights by source_count)
@@ -1096,7 +1096,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiEmoji'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiAvatarStyle'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');

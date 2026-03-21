@@ -460,7 +460,7 @@
         <div class="dash-hero" id="dash-hero">
           <div class="dash-avatar" id="dash-avatar" style="background:none;overflow:visible;">
             <div class="dash-avatar-ring"></div>
-            <svg id="dash-avatar-svg" viewBox="0 0 60 60" style="width:64px;height:64px;border-radius:50%;overflow:hidden;"></svg>
+            <img id="dash-avatar-img" src="" alt="avatar" style="width:64px;height:64px;border-radius:50%;object-fit:cover;transition:filter .4s;">
           </div>
           <div class="dash-hero-text">
             <h3 id="dash-ai-name">Carregando...</h3>
@@ -651,13 +651,24 @@
               <div class="card-label">Identidade da IA</div>
               <div class="identity-grid">
                 <div class="avatar-picker">
-                  <div class="avatar-display" id="avatar-display" onclick="toggleAvatarPicker()" title="Escolher personagem">
-                    <svg id="avatar-svg-display" viewBox="0 0 60 60"></svg>
-                  </div>
-                  <div class="hint" style="text-align:center;font-size:10px;">clique p/ trocar</div>
-                  <div id="avatar-picker-popup" style="display:none;position:absolute;z-index:20;background:white;border-radius:14px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.18);width:240px;">
-                    <div style="font-size:10px;font-weight:700;color:var(--wa-muted);padding:6px 10px 2px;text-transform:uppercase;letter-spacing:.5px;">Escolha o personagem</div>
-                    <div class="avatar-picker-grid" id="avatar-picker-grid"></div>
+                  <img id="avatar-display-img" src="" alt="avatar" style="width:64px;height:64px;border-radius:50%;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,.15);border:3px solid var(--wa-green);">
+                  <div class="hint" style="text-align:center;font-size:10px;margin-top:4px;">gerado pelo nome</div>
+                  <div class="fg" style="margin-top:8px;width:64px;">
+                    <label style="font-size:9px;">Estilo</label>
+                    <select id="cfg-avatar-style" onchange="previewAvatarStyle()" style="font-size:11px;padding:4px 6px;">
+                      <option value="adventurer">Aventureira</option>
+                      <option value="adventurer-neutral">Neutro</option>
+                      <option value="lorelei">Lorelei</option>
+                      <option value="pixel-art">Pixel Art</option>
+                      <option value="fun-emoji">Fun Emoji</option>
+                      <option value="bottts">Robô</option>
+                      <option value="croodles">Sketch</option>
+                      <option value="micah">Micah</option>
+                      <option value="notionists">Notion</option>
+                      <option value="open-peeps">Peeps</option>
+                      <option value="avataaars">Avataaars</option>
+                      <option value="big-ears">Big Ears</option>
+                    </select>
                   </div>
                 </div>
                 <div>
@@ -1167,7 +1178,7 @@
   <div class="ai-float">
     <div class="ai-coach-modal" id="ai-coach-modal">
       <div class="ai-coach-header">
-        <svg id="coach-avatar-svg" viewBox="0 0 60 60" style="width:32px;height:32px;border-radius:50%;flex-shrink:0;"></svg>
+        <img id="coach-avatar-img" src="" alt="avatar" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;">
         <h4 id="coach-header-name">Conversar com a IA</h4>
         <button onclick="toggleAICoach()">✕</button>
       </div>
@@ -1180,7 +1191,7 @@
       </div>
     </div>
     <button class="ai-float-btn" onclick="toggleAICoach()" title="Conversar com a IA" style="padding:0;overflow:hidden;">
-      <svg id="float-btn-svg" viewBox="0 0 60 60" style="width:52px;height:52px;border-radius:50%;"></svg>
+      <img id="float-btn-img" src="" alt="avatar" style="width:52px;height:52px;border-radius:50%;object-fit:cover;">
     </button>
   </div>
 
@@ -1303,8 +1314,10 @@ async function loadConfig(){
     document.getElementById('cfg-ai-age').value = _cfg.aiAge || '';
     document.getElementById('cfg-ai-role').value = _cfg.aiRole || '';
     document.getElementById('cfg-ai-segment').value = _cfg.aiSegment || '';
-    const avatarId = _cfg.aiEmoji || 'duda';
-    setAvatarEverywhere(avatarId);
+    const avatarStyle = _cfg.aiAvatarStyle || 'adventurer';
+    updateAvatarImages(_cfg.aiName || 'IA', avatarStyle);
+    const avatarStyleEl = document.getElementById('cfg-avatar-style');
+    if (avatarStyleEl) avatarStyleEl.value = avatarStyle;
   }
 }
 document.getElementById('cfg-biz-enabled').addEventListener('change', function(){
@@ -1348,7 +1361,7 @@ async function saveConfig(){
     aiAge:      document.getElementById('cfg-ai-age')?.value || '',
     aiRole:     document.getElementById('cfg-ai-role')?.value || '',
     aiSegment:  document.getElementById('cfg-ai-segment')?.value || '',
-    aiEmoji:    document.getElementById('cfg-ai-emoji-val')?.value || 'duda',
+    aiAvatarStyle: document.getElementById('cfg-avatar-style')?.value || 'adventurer',
   };
   const d=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   toast(d.ok?'✅ Salvo!':'❌ Erro ao salvar',!d.ok);
@@ -2176,9 +2189,7 @@ async function loadDashboard() {
     if (!d.ok) return;
     const cfg = await fetch('/api/config').then(r=>r.json());
     const aiName = cfg.aiName || 'IA';
-    const avatarId = cfg.aiEmoji || 'duda';
-    // Set avatar everywhere
-    setAvatarEverywhere(avatarId);
+    const avatarStyle = cfg.aiAvatarStyle || 'adventurer';
     // Hero
     const mood = d.mood?.mood || 'neutra';
     const moodScore = d.mood?.mood_score || 50;
@@ -2187,8 +2198,8 @@ async function loadDashboard() {
     const moodBadge = document.getElementById('dash-mood-badge');
     moodBadge.textContent = `${MOOD_EMOJIS[mood]||'😐'} ${mood} · ${moodScore}%`;
     moodBadge.style.background = `${MOOD_COLORS[mood]||'#8696a0'}33`;
-    // Apply mood expression to dashboard avatar
-    applyMoodExpression(avatarId, mood);
+    // Apply mood expression to dashboard avatar (DiceBear + CSS filter)
+    applyMoodExpression(aiName, avatarStyle, mood);
     const summary = d.report?.content || d.mood?.summary || 'Ainda não há relatório para hoje. Clique em "Gerar relatório".';
     document.getElementById('dash-summary').textContent = summary.slice(0, 180) + (summary.length > 180 ? '...' : '');
     // Stats row 1
@@ -2319,33 +2330,19 @@ function appendCoachMsg(text, role, saved = false) {
   el.scrollTop = el.scrollHeight;
 }
 
-// ── AVATAR CHARACTERS ──
-const AVATARS = {
-  duda:  `<rect width="60" height="60" fill="#d4f5e8"/><ellipse cx="30" cy="52" rx="20" ry="10" fill="#00a884"/><circle cx="30" cy="28" r="16" fill="#fdbcb4"/><ellipse cx="30" cy="14" rx="13" ry="9" fill="#2c1b18"/><ellipse cx="22" cy="26" rx="5" ry="8" fill="#2c1b18"/><ellipse cx="38" cy="26" rx="5" ry="8" fill="#2c1b18"/><circle cx="30" cy="10" rx="7" ry="6" fill="#2c1b18"/><circle cx="26" cy="27" r="2" fill="#333"/><circle cx="34" cy="27" r="2" fill="#333"/><circle cx="26.5" cy="26.5" r=".7" fill="white"/><circle cx="34.5" cy="26.5" r=".7" fill="white"/><path d="M26 34 Q30 38 34 34" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/><rect x="24" y="36" width="12" height="3" rx="1.5" fill="#00a884"/>`,
-  bot:   `<rect width="60" height="60" fill="#dbeafe"/><rect x="12" y="20" width="36" height="28" rx="6" fill="#60a5fa"/><rect x="16" y="24" width="28" height="18" rx="4" fill="#1e3a5f"/><circle cx="23" cy="31" r="4" fill="#00d4ff"/><circle cx="37" cy="31" r="4" fill="#00d4ff"/><circle cx="23" cy="31" r="2" fill="white"/><circle cx="37" cy="31" r="2" fill="white"/><rect x="20" y="38" width="20" height="3" rx="1.5" fill="#3b82f6"/><rect x="27" y="14" width="6" height="8" rx="3" fill="#60a5fa"/><circle cx="30" cy="13" r="3" fill="#fbbf24"/><rect x="6" y="28" width="6" height="10" rx="3" fill="#60a5fa"/><rect x="48" y="28" width="6" height="10" rx="3" fill="#60a5fa"/>`,
-  sol:   `<rect width="60" height="60" fill="#fef3c7"/><circle cx="30" cy="28" r="14" fill="#fdbcb4"/><ellipse cx="30" cy="14" rx="14" ry="10" fill="#f59e0b"/><ellipse cx="18" cy="24" rx="5" ry="9" fill="#f59e0b"/><ellipse cx="42" cy="24" rx="5" ry="9" fill="#f59e0b"/><circle cx="26" cy="25" r="2.2" fill="#333"/><circle cx="34" cy="25" r="2.2" fill="#333"/><circle cx="26.6" cy="24.4" r=".8" fill="white"/><circle cx="34.6" cy="24.4" r=".8" fill="white"/><path d="M25 31 Q30 36 35 31" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/><ellipse cx="23" cy="29" rx="2.5" ry="1.5" fill="#f87171" opacity=".5"/><ellipse cx="37" cy="29" rx="2.5" ry="1.5" fill="#f87171" opacity=".5"/>`,
-  leo:   `<rect width="60" height="60" fill="#dbeafe"/><ellipse cx="30" cy="54" rx="18" ry="8" fill="#1e40af"/><circle cx="30" cy="28" r="14" fill="#fdbcb4"/><ellipse cx="30" cy="15" rx="12" ry="9" fill="#1c1001"/><ellipse cx="20" cy="24" rx="5" ry="8" fill="#1c1001"/><ellipse cx="40" cy="24" rx="5" ry="8" fill="#1c1001"/><circle cx="26" cy="27" r="2" fill="#333"/><circle cx="34" cy="27" r="2" fill="#333"/><circle cx="26.5" cy="26.5" r=".7" fill="white"/><circle cx="34.5" cy="26.5" r=".7" fill="white"/><path d="M26 33 Q30 37 34 33" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/><rect x="27.5" y="38" width="5" height="8" rx="1" fill="#3b82f6"/>`,
-  ana:   `<rect width="60" height="60" fill="#fee2e2"/><ellipse cx="30" cy="52" rx="18" ry="10" fill="#dc2626"/><circle cx="30" cy="28" r="14" fill="#fdbcb4"/><ellipse cx="30" cy="14" rx="15" ry="11" fill="#b45309"/><ellipse cx="17" cy="22" rx="6" ry="10" fill="#b45309"/><ellipse cx="43" cy="22" rx="6" ry="10" fill="#b45309"/><circle cx="26" cy="27" r="2.2" fill="#333"/><circle cx="34" cy="27" r="2.2" fill="#333"/><circle cx="26.6" cy="26.4" r=".8" fill="white"/><circle cx="34.6" cy="26.4" r=".8" fill="white"/><path d="M26 33 Q30 37 34 33" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/><circle cx="24" cy="29" r="1.5" fill="#f87171" opacity=".7"/><circle cx="36" cy="29" r="1.5" fill="#f87171" opacity=".7"/>`,
-  max:   `<rect width="60" height="60" fill="#ede9fe"/><ellipse cx="30" cy="52" rx="18" ry="9" fill="#7c3aed"/><circle cx="30" cy="27" r="14" fill="#fdbcb4"/><ellipse cx="30" cy="14" rx="11" ry="8" fill="#1c1001"/><ellipse cx="20" cy="23" rx="5" ry="8" fill="#1c1001"/><ellipse cx="40" cy="23" rx="5" ry="8" fill="#1c1001"/><rect x="19" y="23" width="10" height="8" rx="4" fill="none" stroke="#555" stroke-width="1.5"/><rect x="31" y="23" width="10" height="8" rx="4" fill="none" stroke="#555" stroke-width="1.5"/><line x1="29" y1="27" x2="31" y2="27" stroke="#555" stroke-width="1.5"/><circle cx="25" cy="27" r="1.8" fill="#333"/><circle cx="37" cy="27" r="1.8" fill="#333"/><path d="M26 33 Q30 37 34 33" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
-  lia:   `<rect width="60" height="60" fill="#f3e8ff"/><ellipse cx="30" cy="52" rx="18" ry="9" fill="#9333ea"/><circle cx="30" cy="28" r="14" fill="#fde8d8"/><ellipse cx="30" cy="13" rx="14" ry="10" fill="#7c3aed"/><ellipse cx="17" cy="23" rx="6" ry="11" fill="#7c3aed"/><ellipse cx="43" cy="23" rx="6" ry="11" fill="#7c3aed"/><circle cx="26" cy="27" r="2.2" fill="#333"/><circle cx="34" cy="27" r="2.2" fill="#333"/><circle cx="26.6" cy="26.4" r=".8" fill="white"/><circle cx="34.6" cy="26.4" r=".8" fill="white"/><path d="M25 33 Q30 37 35 33" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
-  tom:   `<rect width="60" height="60" fill="#dcfce7"/><ellipse cx="30" cy="52" rx="18" ry="9" fill="#15803d"/><circle cx="30" cy="27" r="14" fill="#fdbcb4"/><ellipse cx="30" cy="14" rx="12" ry="9" fill="#78350f"/><ellipse cx="20" cy="23" rx="4" ry="8" fill="#78350f"/><ellipse cx="40" cy="23" rx="4" ry="8" fill="#78350f"/><circle cx="26" cy="26" r="2.2" fill="#333"/><circle cx="34" cy="26" r="2.2" fill="#333"/><circle cx="26.6" cy="25.4" r=".8" fill="white"/><circle cx="34.6" cy="25.4" r=".8" fill="white"/><path d="M24 33 Q30 39 36 33" stroke="#c47a5a" stroke-width="2" fill="none" stroke-linecap="round"/>`,
-  astro: `<rect width="60" height="60" fill="#0f172a"/><circle cx="30" cy="30" r="24" fill="#e2e8f0"/><circle cx="30" cy="30" r="20" fill="#1e293b"/><rect x="16" y="18" width="28" height="22" rx="10" fill="#60a5fa" opacity=".9"/><circle cx="30" cy="29" r="10" fill="#0ea5e9"/><circle cx="26" cy="28" r="2.5" fill="white"/><circle cx="34" cy="28" r="2.5" fill="white"/><circle cx="26.8" cy="27.2" r="1" fill="#1e293b"/><circle cx="34.8" cy="27.2" r="1" fill="#1e293b"/><path d="M26 33 Q30 36 34 33" stroke="white" stroke-width="1.5" fill="none" stroke-linecap="round"/><rect x="12" y="32" width="8" height="4" rx="2" fill="#94a3b8"/><rect x="40" y="32" width="8" height="4" rx="2" fill="#94a3b8"/>`,
-  star:  `<rect width="60" height="60" fill="#fef9c3"/><polygon points="30,4 36,22 54,22 40,33 45,52 30,41 15,52 20,33 6,22 24,22" fill="#fbbf24"/><circle cx="30" cy="28" r="10" fill="#fef3c7"/><circle cx="26" cy="26" r="2" fill="#333"/><circle cx="34" cy="26" r="2" fill="#333"/><circle cx="26.6" cy="25.4" r=".7" fill="white"/><circle cx="34.6" cy="25.4" r=".7" fill="white"/><path d="M26 31 Q30 35 34 31" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
-};
-const AVATAR_NAMES = { duda:'Duda', bot:'Bot', sol:'Sol', leo:'Leo', ana:'Ana', max:'Max', lia:'Lia', tom:'Tom', astro:'Astro', star:'Star' };
-let _selectedAvatar = 'duda';
+// ── DICEBEAR AVATARS ──
+function getDiceBearUrl(style, seed, size = 80) {
+  return `https://api.dicebear.com/9.x/${style || 'adventurer'}/svg?seed=${encodeURIComponent(seed || 'IA')}&radius=50&size=${size}`;
+}
 
-// Mood overlay: replaces eyes+mouth in the dashboard avatar SVG
-// Each entry: [eyes_svg, mouth_svg, extra_effects]
-const MOOD_EXPRESSIONS = {
-  animada:    { eyes:`<circle cx="26" cy="27" r="2.5" fill="#333"/><circle cx="34" cy="27" r="2.5" fill="#333"/><circle cx="27" cy="26" r="1" fill="white"/><circle cx="35" cy="26" r="1" fill="white"/><path d="M23 23 L26 21 L29 23" stroke="#fbbf24" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M31 23 L34 21 L37 23" stroke="#fbbf24" stroke-width="1.2" fill="none" stroke-linecap="round"/>`, mouth:`<path d="M23 34 Q30 41 37 34" stroke="#c47a5a" stroke-width="2" fill="#f87171" opacity=".7" stroke-linecap="round"/>`, extra:`<text x="38" y="20" font-size="8">✨</text><text x="14" y="22" font-size="8">🌟</text>` },
-  otimista:   { eyes:`<circle cx="26" cy="27" r="2.2" fill="#333"/><circle cx="34" cy="27" r="2.2" fill="#333"/><circle cx="26.8" cy="26.2" r=".9" fill="white"/><circle cx="34.8" cy="26.2" r=".9" fill="white"/>`, mouth:`<path d="M24 33 Q30 39 36 33" stroke="#c47a5a" stroke-width="1.8" fill="none" stroke-linecap="round"/>`, extra:`` },
-  neutra:     { eyes:`<circle cx="26" cy="27" r="2" fill="#333"/><circle cx="34" cy="27" r="2" fill="#333"/><circle cx="26.7" cy="26.3" r=".7" fill="white"/><circle cx="34.7" cy="26.3" r=".7" fill="white"/>`, mouth:`<line x1="25" y1="34" x2="35" y2="34" stroke="#c47a5a" stroke-width="1.5" stroke-linecap="round"/>`, extra:`` },
-  preocupada: { eyes:`<circle cx="26" cy="27" r="2" fill="#333"/><circle cx="34" cy="27" r="2" fill="#333"/><circle cx="26.7" cy="26.3" r=".7" fill="white"/><circle cx="34.7" cy="26.3" r=".7" fill="white"/><path d="M23 24 L26 26" stroke="#555" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M37 24 L34 26" stroke="#555" stroke-width="1.2" fill="none" stroke-linecap="round"/>`, mouth:`<path d="M25 36 Q30 32 35 36" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/>`, extra:`<text x="26" y="22" font-size="7">···</text>` },
-  frustrada:  { eyes:`<path d="M23 25 L29 28" stroke="#333" stroke-width="2" stroke-linecap="round"/><path d="M37 25 L31 28" stroke="#333" stroke-width="2" stroke-linecap="round"/><circle cx="26" cy="28" r="1.5" fill="#333"/><circle cx="34" cy="28" r="1.5" fill="#333"/>`, mouth:`<path d="M25 37 Q30 33 35 37" stroke="#c47a5a" stroke-width="1.8" fill="none" stroke-linecap="round"/>`, extra:`<text x="38" y="20" font-size="8">💢</text>` },
+const MOOD_FILTERS = {
+  animada:    'brightness(1.15) saturate(1.5) drop-shadow(0 0 6px rgba(16,185,129,.8))',
+  otimista:   'brightness(1.05) saturate(1.2)',
+  neutra:     'saturate(0.85)',
+  preocupada: 'sepia(0.4) brightness(0.9) hue-rotate(10deg)',
+  frustrada:  'hue-rotate(330deg) saturate(1.4) brightness(0.85)',
 };
 
-// Greeting messages shown on dashboard based on mood
 const MOOD_GREETINGS = {
   animada:    ['Hoje tô animada! 🚀 Bora vender!', 'Estou no meu melhor hoje! ✨', 'Que dia incrível! Estou pronta para tudo!'],
   otimista:   ['Bom dia! As coisas estão indo bem 😊', 'Tudo fluindo bem por aqui!', 'Clima positivo hoje!'],
@@ -2354,75 +2351,43 @@ const MOOD_GREETINGS = {
   frustrada:  ['Hoje não foi fácil...', 'Precisamos melhorar algumas coisas.', 'Alguns atendimentos não saíram como eu queria.'],
 };
 
-function applyMoodExpression(avatarId, mood) {
-  const expr = MOOD_EXPRESSIONS[mood] || MOOD_EXPRESSIONS.neutra;
-  const base = AVATARS[avatarId] || AVATARS.duda;
-  // For bot avatar, mood changes LED eyes color differently
-  let moodSvg;
-  if (avatarId === 'bot') {
-    const ledColor = { animada:'#fbbf24', otimista:'#00d4ff', neutra:'#94a3b8', preocupada:'#fb923c', frustrada:'#f87171' }[mood] || '#00d4ff';
-    moodSvg = base.replace(/fill="#00d4ff"/g, `fill="${ledColor}"`);
-  } else {
-    // Replace the eye circles and mouth path in the base SVG with mood-specific version
-    // Strategy: append mood overlay on top
-    moodSvg = base + `<g opacity="1">${expr.eyes}${expr.mouth}${expr.extra}</g>`;
+function updateAvatarImages(name, style) {
+  const url = getDiceBearUrl(style, name);
+  ['dash-avatar-img','coach-avatar-img','float-btn-img','avatar-display-img'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.src = url;
+  });
+}
+
+function previewAvatarStyle() {
+  const style = document.getElementById('cfg-avatar-style')?.value || 'adventurer';
+  const name = document.getElementById('cfg-ai-name')?.value || 'IA';
+  const el = document.getElementById('avatar-display-img');
+  if (el) el.src = getDiceBearUrl(style, name, 120);
+}
+
+function applyMoodExpression(name, style, mood) {
+  updateAvatarImages(name, style);
+  const filter = MOOD_FILTERS[mood] || MOOD_FILTERS.neutra;
+  const dashImg = document.getElementById('dash-avatar-img');
+  if (dashImg) {
+    dashImg.style.filter = filter;
+    dashImg.style.transition = 'filter 0.6s ease';
   }
-  const el = document.getElementById('dash-avatar-svg');
-  if (el) el.innerHTML = moodSvg;
-  // Set dash-hero background tint based on mood
   const heroEl = document.getElementById('dash-hero');
   if (heroEl) {
     const colors = { animada:'135deg,#065f46,#059669', otimista:'135deg,#005c4b,#00a884', neutra:'135deg,#374151,#6b7280', preocupada:'135deg,#78350f,#d97706', frustrada:'135deg,#7f1d1d,#ef4444' };
     heroEl.style.background = `linear-gradient(${colors[mood] || colors.neutra})`;
   }
-  // Greet message
   const greets = MOOD_GREETINGS[mood] || MOOD_GREETINGS.neutra;
   const greet = greets[Math.floor(Math.random() * greets.length)];
   const nameEl = document.getElementById('dash-ai-name');
   if (nameEl) nameEl.title = greet;
-  // Show greeting in summary if no report yet
   const summaryEl = document.getElementById('dash-summary');
   if (summaryEl && summaryEl.textContent.includes('Ainda não há relatório')) {
     summaryEl.textContent = greet;
   }
 }
-
-function setAvatarEverywhere(id) {
-  _selectedAvatar = id;
-  const inner = AVATARS[id] || AVATARS.duda;
-  ['avatar-svg-display','dash-avatar-svg','coach-avatar-svg','float-btn-svg'].forEach(elId => {
-    const el = document.getElementById(elId);
-    if (el) el.innerHTML = inner;
-  });
-  let inp = document.getElementById('cfg-ai-emoji-val');
-  if (!inp) { inp = document.createElement('input'); inp.type='hidden'; inp.id='cfg-ai-emoji-val'; document.body.appendChild(inp); }
-  inp.value = id;
-  document.querySelectorAll('.av-opt').forEach(el => el.classList.toggle('selected', el.dataset.id === id));
-}
-
-function toggleAvatarPicker() {
-  const p = document.getElementById('avatar-picker-popup');
-  if (p.style.display === 'none') {
-    const grid = document.getElementById('avatar-picker-grid');
-    if (!grid.innerHTML) {
-      grid.innerHTML = Object.keys(AVATARS).map(id =>
-        `<div class="av-opt${id===_selectedAvatar?' selected':''}" data-id="${id}" onclick="selectAvatar('${id}')" title="${AVATAR_NAMES[id]||id}"><svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">${AVATARS[id]}</svg></div>`
-      ).join('');
-    }
-    p.style.display = 'block';
-  } else { p.style.display = 'none'; }
-}
-
-function selectAvatar(id) {
-  setAvatarEverywhere(id);
-  document.getElementById('avatar-picker-popup').style.display = 'none';
-}
-
-document.addEventListener('click', e => {
-  const popup = document.getElementById('avatar-picker-popup');
-  const btn = document.getElementById('avatar-display');
-  if (popup && !popup.contains(e.target) && !btn?.contains(e.target)) popup.style.display = 'none';
-});
 
 // ── INIT ──
 loadConfig();
