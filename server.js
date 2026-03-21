@@ -622,7 +622,7 @@ async function generateDailyReport() {
     const today = getBrazilDate();
     const { rows: leads } = await pool.query('SELECT stage, sentiment FROM crm_leads WHERE updated_at > $1', [dayAgo]);
     const { rows: totalRow } = await pool.query('SELECT COUNT(*) as count FROM crm_leads');
-    const { rows: msgCount } = await pool.query("SELECT COUNT(*) as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]);
+    const { rows: msgCount } = await pool.query('SELECT COUNT(*) as count FROM conversations WHERE last_user_at > $1', [dayAgo]);
     const { rows: memory } = await pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 15');
     const stageCount = {}, sentimentCount = {};
     leads.forEach(l => {
@@ -1410,12 +1410,14 @@ app.get('/api/dashboard', async (req, res) => {
     const [moodRows, totalRow, heatmap, memory, report, stages, msgToday, metricsRow, semRespostaRow] = await Promise.all([
       pool.query("SELECT * FROM ai_mood WHERE id='singleton'"),
       pool.query('SELECT COUNT(*)::int as count FROM crm_leads'),
+      // Heatmap: use type='message' to avoid counting system logs; group by hour
       pool.query(`SELECT EXTRACT(HOUR FROM to_timestamp(ts/1000) AT TIME ZONE 'America/Sao_Paulo')::int as hour, COUNT(*)::int as count
-        FROM app_logs WHERE direction='in' AND ts > $1 GROUP BY hour ORDER BY hour`, [weekAgo]),
+        FROM app_logs WHERE type='message' AND direction='in' AND ts > $1 GROUP BY hour ORDER BY hour`, [weekAgo]),
       pool.query('SELECT id, category, content, source_count FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 12'),
       pool.query('SELECT * FROM ai_reports ORDER BY created_at DESC LIMIT 1'),
       pool.query('SELECT stage, COUNT(*)::int as count FROM crm_leads GROUP BY stage'),
-      pool.query("SELECT COUNT(*)::int as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]),
+      // "Mensagens hoje" = unique contacts who sent a message today (deduplicated via conversations table)
+      pool.query('SELECT COUNT(*)::int as count FROM conversations WHERE last_user_at > $1', [dayAgo]),
       pool.query(`SELECT
         COUNT(*) FILTER (WHERE updated_at > $1)::int as leads_hoje,
         COUNT(*) FILTER (WHERE stage='qualificado')::int as qualificados,
@@ -1476,7 +1478,7 @@ app.post('/api/ai/coach', async (req, res) => {
         COUNT(*) FILTER (WHERE stage='perdido')::int as perdidos,
         COUNT(*) FILTER (WHERE stage='atendimento')::int as em_atendimento,
         COUNT(*)::int as total FROM crm_leads`, [dayAgo]),
-      pool.query("SELECT COUNT(*)::int as count FROM app_logs WHERE ts > $1 AND direction='in'", [dayAgo]),
+      pool.query('SELECT COUNT(*)::int as count FROM conversations WHERE last_user_at > $1', [dayAgo]),
       pool.query(`SELECT COUNT(*)::int as count FROM conversations WHERE last_ai_at IS NOT NULL AND last_ai_at > $1 AND (last_user_at IS NULL OR last_ai_at > last_user_at)`, [now - 172800000]),
     ]);
     const m = metricsRow.rows[0] || {};

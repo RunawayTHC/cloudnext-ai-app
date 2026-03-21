@@ -2187,6 +2187,8 @@ async function loadDashboard() {
     const moodBadge = document.getElementById('dash-mood-badge');
     moodBadge.textContent = `${MOOD_EMOJIS[mood]||'😐'} ${mood} · ${moodScore}%`;
     moodBadge.style.background = `${MOOD_COLORS[mood]||'#8696a0'}33`;
+    // Apply mood expression to dashboard avatar
+    applyMoodExpression(avatarId, mood);
     const summary = d.report?.content || d.mood?.summary || 'Ainda não há relatório para hoje. Clique em "Gerar relatório".';
     document.getElementById('dash-summary').textContent = summary.slice(0, 180) + (summary.length > 180 ? '...' : '');
     // Stats row 1
@@ -2332,6 +2334,58 @@ const AVATARS = {
 };
 const AVATAR_NAMES = { duda:'Duda', bot:'Bot', sol:'Sol', leo:'Leo', ana:'Ana', max:'Max', lia:'Lia', tom:'Tom', astro:'Astro', star:'Star' };
 let _selectedAvatar = 'duda';
+
+// Mood overlay: replaces eyes+mouth in the dashboard avatar SVG
+// Each entry: [eyes_svg, mouth_svg, extra_effects]
+const MOOD_EXPRESSIONS = {
+  animada:    { eyes:`<circle cx="26" cy="27" r="2.5" fill="#333"/><circle cx="34" cy="27" r="2.5" fill="#333"/><circle cx="27" cy="26" r="1" fill="white"/><circle cx="35" cy="26" r="1" fill="white"/><path d="M23 23 L26 21 L29 23" stroke="#fbbf24" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M31 23 L34 21 L37 23" stroke="#fbbf24" stroke-width="1.2" fill="none" stroke-linecap="round"/>`, mouth:`<path d="M23 34 Q30 41 37 34" stroke="#c47a5a" stroke-width="2" fill="#f87171" opacity=".7" stroke-linecap="round"/>`, extra:`<text x="38" y="20" font-size="8">✨</text><text x="14" y="22" font-size="8">🌟</text>` },
+  otimista:   { eyes:`<circle cx="26" cy="27" r="2.2" fill="#333"/><circle cx="34" cy="27" r="2.2" fill="#333"/><circle cx="26.8" cy="26.2" r=".9" fill="white"/><circle cx="34.8" cy="26.2" r=".9" fill="white"/>`, mouth:`<path d="M24 33 Q30 39 36 33" stroke="#c47a5a" stroke-width="1.8" fill="none" stroke-linecap="round"/>`, extra:`` },
+  neutra:     { eyes:`<circle cx="26" cy="27" r="2" fill="#333"/><circle cx="34" cy="27" r="2" fill="#333"/><circle cx="26.7" cy="26.3" r=".7" fill="white"/><circle cx="34.7" cy="26.3" r=".7" fill="white"/>`, mouth:`<line x1="25" y1="34" x2="35" y2="34" stroke="#c47a5a" stroke-width="1.5" stroke-linecap="round"/>`, extra:`` },
+  preocupada: { eyes:`<circle cx="26" cy="27" r="2" fill="#333"/><circle cx="34" cy="27" r="2" fill="#333"/><circle cx="26.7" cy="26.3" r=".7" fill="white"/><circle cx="34.7" cy="26.3" r=".7" fill="white"/><path d="M23 24 L26 26" stroke="#555" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M37 24 L34 26" stroke="#555" stroke-width="1.2" fill="none" stroke-linecap="round"/>`, mouth:`<path d="M25 36 Q30 32 35 36" stroke="#c47a5a" stroke-width="1.5" fill="none" stroke-linecap="round"/>`, extra:`<text x="26" y="22" font-size="7">···</text>` },
+  frustrada:  { eyes:`<path d="M23 25 L29 28" stroke="#333" stroke-width="2" stroke-linecap="round"/><path d="M37 25 L31 28" stroke="#333" stroke-width="2" stroke-linecap="round"/><circle cx="26" cy="28" r="1.5" fill="#333"/><circle cx="34" cy="28" r="1.5" fill="#333"/>`, mouth:`<path d="M25 37 Q30 33 35 37" stroke="#c47a5a" stroke-width="1.8" fill="none" stroke-linecap="round"/>`, extra:`<text x="38" y="20" font-size="8">💢</text>` },
+};
+
+// Greeting messages shown on dashboard based on mood
+const MOOD_GREETINGS = {
+  animada:    ['Hoje tô animada! 🚀 Bora vender!', 'Estou no meu melhor hoje! ✨', 'Que dia incrível! Estou pronta para tudo!'],
+  otimista:   ['Bom dia! As coisas estão indo bem 😊', 'Tudo fluindo bem por aqui!', 'Clima positivo hoje!'],
+  neutra:     ['Por aqui tudo tranquilo.', 'Dia normal, acompanhando os atendimentos.', 'Nada de mais hoje, só trabalhando.'],
+  preocupada: ['Hmm, alguns clientes sem resposta me preocupam...', 'Preciso conversar com você sobre alguns casos.', 'Tô de olho em alguns leads parados...'],
+  frustrada:  ['Hoje não foi fácil...', 'Precisamos melhorar algumas coisas.', 'Alguns atendimentos não saíram como eu queria.'],
+};
+
+function applyMoodExpression(avatarId, mood) {
+  const expr = MOOD_EXPRESSIONS[mood] || MOOD_EXPRESSIONS.neutra;
+  const base = AVATARS[avatarId] || AVATARS.duda;
+  // For bot avatar, mood changes LED eyes color differently
+  let moodSvg;
+  if (avatarId === 'bot') {
+    const ledColor = { animada:'#fbbf24', otimista:'#00d4ff', neutra:'#94a3b8', preocupada:'#fb923c', frustrada:'#f87171' }[mood] || '#00d4ff';
+    moodSvg = base.replace(/fill="#00d4ff"/g, `fill="${ledColor}"`);
+  } else {
+    // Replace the eye circles and mouth path in the base SVG with mood-specific version
+    // Strategy: append mood overlay on top
+    moodSvg = base + `<g opacity="1">${expr.eyes}${expr.mouth}${expr.extra}</g>`;
+  }
+  const el = document.getElementById('dash-avatar-svg');
+  if (el) el.innerHTML = moodSvg;
+  // Set dash-hero background tint based on mood
+  const heroEl = document.getElementById('dash-hero');
+  if (heroEl) {
+    const colors = { animada:'135deg,#065f46,#059669', otimista:'135deg,#005c4b,#00a884', neutra:'135deg,#374151,#6b7280', preocupada:'135deg,#78350f,#d97706', frustrada:'135deg,#7f1d1d,#ef4444' };
+    heroEl.style.background = `linear-gradient(${colors[mood] || colors.neutra})`;
+  }
+  // Greet message
+  const greets = MOOD_GREETINGS[mood] || MOOD_GREETINGS.neutra;
+  const greet = greets[Math.floor(Math.random() * greets.length)];
+  const nameEl = document.getElementById('dash-ai-name');
+  if (nameEl) nameEl.title = greet;
+  // Show greeting in summary if no report yet
+  const summaryEl = document.getElementById('dash-summary');
+  if (summaryEl && summaryEl.textContent.includes('Ainda não há relatório')) {
+    summaryEl.textContent = greet;
+  }
+}
 
 function setAvatarEverywhere(id) {
   _selectedAvatar = id;
