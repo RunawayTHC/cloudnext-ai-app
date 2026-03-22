@@ -2596,17 +2596,34 @@ fill.position.set(-2, 2, -1); scene.add(fill);
 const loader = new GLTFLoader();
 const allClips = {};
 let mixer = null, currentAction = null, ready = false, pendingMood = 'neutra';
-let currentModel = null, bobAngle = 0;
+let currentModel = null, bobAngle = 0, actionTimer = null;
 
+// Mood → animation pool (tries in order, first found wins)
 const MOOD_ANIMS = {
-  animada:    { name: 'Spawn_Ground', loop: false, then: 'Idle_B' },
-  otimista:   { name: 'Idle_B',      loop: true  },
-  neutra:     { name: 'Idle_A',      loop: true  },
-  preocupada: { name: 'Interact',    loop: true  },
-  frustrada:  { name: 'Hit_A',       loop: false, then: 'Idle_A' },
+  animada:    { clips: ['Jump', 'Cheer', 'Spawn_Ground'], loop: false, then: 'Idle_B' },
+  otimista:   { clips: ['Idle_B'],                        loop: true  },
+  neutra:     { clips: ['Idle_A'],                        loop: true  },
+  preocupada: { clips: ['Interact', 'Idle_A'],            loop: true  },
+  frustrada:  { clips: ['Hit_A'],                         loop: false, then: 'Idle_A' },
 };
 
-function crossfade(toClip, loop, thenName) {
+// Periodic action pool per character — same rig, but visually different mesh
+const CHAR_ACTIONS = {
+  'Ranger.glb':       ['Attack_A', 'Attack_B', 'Interact'],
+  'Knight.glb':       ['Attack_A', 'Attack_B', 'Hit_A'],
+  'Mage.glb':         ['Attack_A', 'Spawn_Ground', 'Interact'],
+  'Barbarian.glb':    ['Attack_A', 'Attack_B', 'Hit_A'],
+  'Rogue.glb':        ['Attack_A', 'Dodge', 'Interact'],
+  'Rogue_Hooded.glb': ['Attack_A', 'Dodge', 'Interact'],
+};
+
+// Return first available clip from name list, fallback to Idle_A
+function tryClip(...names) {
+  for (const n of names) if (allClips[n]) return allClips[n];
+  return allClips['Idle_A'];
+}
+
+function crossfade(toClip, loop, then) {
   if (!toClip || !mixer) return;
   const next = mixer.clipAction(toClip);
   next.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce);
@@ -2616,35 +2633,60 @@ function crossfade(toClip, loop, thenName) {
     currentAction.fadeOut(0.4);
   } else { next.reset().play(); }
   currentAction = next;
-  if (!loop && thenName) {
+  if (!loop && then) {
+    const thenClip = typeof then === 'string' ? (allClips[then] || allClips['Idle_A']) : then;
     mixer.addEventListener('finished', function cb(e) {
       if (e.action !== next) return;
       mixer.removeEventListener('finished', cb);
-      crossfade(allClips[thenName] || allClips['Idle_A'], true, null);
+      crossfade(thenClip, true, null);
     });
   }
 }
 
+function idleClip(mood) {
+  const cfg = MOOD_ANIMS[mood] || MOOD_ANIMS.neutra;
+  return cfg.loop ? tryClip(...cfg.clips) : tryClip('Idle_B', 'Idle_A');
+}
+
 function playMood(mood) {
   const cfg = MOOD_ANIMS[mood] || MOOD_ANIMS.neutra;
-  crossfade(allClips[cfg.name] || allClips['Idle_A'], cfg.loop, cfg.then || null);
+  crossfade(tryClip(...cfg.clips), cfg.loop, cfg.then || null);
+  pendingMood = mood;
+}
+
+// Periodic character action: weapon move / interact, then back to mood idle
+function scheduleAction() {
+  clearTimeout(actionTimer);
+  actionTimer = setTimeout(() => {
+    if (!ready || !currentModel) return;
+    const pool = CHAR_ACTIONS[window._aiCharacterFile || 'Mage.glb'] || ['Interact'];
+    const name = pool[Math.floor(Math.random() * pool.length)];
+    crossfade(tryClip(name, 'Attack_A', 'Interact'), false, idleClip(pendingMood));
+    scheduleAction();
+  }, 9000 + Math.random() * 7000);   // every 9–16 s
+}
+
+// On load: greet with wave → mood idle → periodic actions
+function playWelcome() {
+  const wave = tryClip('Wave', 'Wave_A', 'Wave_B', 'Spawn_Ground', 'Interact');
+  crossfade(wave, false, idleClip(pendingMood));
+  scheduleAction();
 }
 
 function loadCharacter(file) {
   if (currentModel) { scene.remove(currentModel); currentModel = null; }
+  clearTimeout(actionTimer);
   mixer = null; currentAction = null; ready = false;
 
   loader.load('/models/' + file, gltf => {
     const model = gltf.scene;
 
-    // Normalize all characters to the same scene height so they appear
-    // identical in size regardless of hat height or model proportions.
+    // Normalize all characters to REF_H so they all appear the same size
     const REF_H = 1.8;
     const initBox = new THREE.Box3().setFromObject(model);
-    const initH = initBox.max.y - initBox.min.y;
-    model.scale.setScalar(REF_H / initH);
+    model.scale.setScalar(REF_H / (initBox.max.y - initBox.min.y));
 
-    // Re-center after scaling: feet at y=0, centered on XZ
+    // Re-center after scaling: feet at y=0, centered XZ
     const box = new THREE.Box3().setFromObject(model);
     model.position.set(
       -(box.max.x + box.min.x) / 2,
@@ -2654,18 +2696,16 @@ function loadCharacter(file) {
     scene.add(model);
     currentModel = model;
 
-    // Fixed camera for all characters (same REF_H → same framing always)
+    // Fixed camera (same for all normalized characters)
     const dist = REF_H * 2.0;
     camera.position.set(0, REF_H * 0.85, dist);
     camera.lookAt(0, REF_H * 0.85, 0);
 
-    // KEY FIX: use SkinnedMesh as mixer root
-    // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
     let skinned = null;
     model.traverse(n => { if (n.isSkinnedMesh && !skinned) skinned = n; });
     mixer = new THREE.AnimationMixer(skinned || model);
 
-    if (Object.keys(allClips).length > 0) { ready = true; playMood(pendingMood); }
+    if (Object.keys(allClips).length > 0) { ready = true; playWelcome(); }
   }, undefined, err => console.warn('3D:', err));
 }
 
@@ -2673,6 +2713,8 @@ loader.load('/models/Rig_Medium_General.glb', g1 => {
   g1.animations.forEach(c => { allClips[c.name] = c; });
   loader.load('/models/Rig_Medium_MovementBasic.glb', g2 => {
     g2.animations.forEach(c => { allClips[c.name] = c; });
+    // Log available clips so we can fine-tune animation names
+    console.log('[3D clips]', Object.keys(allClips).sort().join(', '));
     loadCharacter(window._aiCharacterFile || 'Mage.glb');
   });
 });
