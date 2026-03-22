@@ -339,6 +339,9 @@
     .dash-mood-badge { display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,.2); padding:3px 10px; border-radius:20px; font-size:12px; margin-top:4px; }
     .dash-hero-text h3 { font-size:16px; font-weight:700; margin-bottom:2px; }
     .dash-hero-text p { font-size:13px; opacity:.88; line-height:1.5; }
+    /* ── SPEECH BUBBLE ── */
+    .speech-bubble { position:relative; background:rgba(255,255,255,0.93); color:#111b21; border-radius:2px 12px 12px 12px; padding:10px 14px; font-size:13px; line-height:1.5; margin-top:10px; box-shadow:0 2px 8px rgba(0,0,0,0.15); max-width:100%; }
+    .speech-bubble::before { content:''; position:absolute; left:0; top:-8px; border:8px solid transparent; border-bottom-color:rgba(255,255,255,0.93); border-left:0; border-top:0; }
     .dash-grid { display:grid; grid-template-columns:1fr 320px; gap:14px; align-items:start; }
     @media(max-width:1000px){.dash-grid{grid-template-columns:1fr}}
     .heatmap-grid { display:grid; grid-template-columns:repeat(24,1fr); gap:2px; margin-top:10px; }
@@ -469,12 +472,11 @@
           <div class="dash-avatar-3d" id="dash-avatar-3d">
             <canvas id="avatar-canvas" width="90" height="140"></canvas>
           </div>
-          <div class="dash-hero-text">
+          <div class="dash-hero-text" style="flex:1;">
             <h3 id="dash-ai-name">Carregando...</h3>
             <div class="dash-mood-badge" id="dash-mood-badge">● neutra</div>
-            <p id="dash-summary" style="margin-top:6px;">Aguardando dados do dia...</p>
+            <div class="speech-bubble" id="dash-summary">Carregando...</div>
           </div>
-          <button class="btn" style="background:rgba(255,255,255,.2);color:white;margin-left:auto;align-self:flex-start;font-size:12px;" onclick="generateReport()">↻ Gerar relatório</button>
         </div>
         <!-- Quick Stats Row 1 -->
         <div class="stats-row" style="margin-bottom:8px;">
@@ -2247,8 +2249,7 @@ async function loadDashboard() {
     moodBadge.style.background = `${MOOD_COLORS[mood]||'#8696a0'}33`;
     // Apply mood expression to dashboard avatar (DiceBear + CSS filter)
     applyMoodExpression(aiName, avatarStyle, mood);
-    const summary = d.report?.content || d.mood?.summary || 'Ainda não há relatório para hoje. Clique em "Gerar relatório".';
-    document.getElementById('dash-summary').textContent = summary.slice(0, 180) + (summary.length > 180 ? '...' : '');
+    // Speech bubble text comes from loadLeadQuality() with real-time stats
     // Stats row 1
     document.getElementById('st-msg-hoje').textContent = d.messagesHoje ?? 0;
     document.getElementById('st-leads-total').textContent = d.totalLeads || 0;
@@ -2324,9 +2325,52 @@ function renderDashMemory(memory) {
     </div>`).join('');
 }
 
+// Deriva humor real das estatísticas do dia (independe de relatório gerado)
+function scoreToMood(score) {
+  if (score === null) return 'neutra';
+  if (score >= 70) return 'animada';
+  if (score >= 50) return 'otimista';
+  if (score >= 25) return 'neutra';
+  if (score >= 10) return 'preocupada';
+  return 'frustrada';
+}
+
+function buildBubbleMsg(mood, d) {
+  const sc = d.score !== null ? d.score + '%' : null;
+  const msgs = {
+    animada: [
+      `Hoje tô voando! ${d.qualificados} leads qualificados de ${d.total} — ${sc} de aproveitamento! 🚀`,
+      `Que dia incrível! ${sc} de conversão. Esse ritmo é imbatível! ✨`,
+    ],
+    otimista: [
+      `Bom progresso! ${d.qualificados} qualificados de ${d.total} leads hoje, ${sc} de aproveitamento 😊`,
+      `As coisas estão indo bem — ${sc} de conversão. Vamos manter o ritmo!`,
+    ],
+    neutra: [
+      `${d.total} leads hoje, ${d.qualificados} qualificados. ${sc ? sc + ' de aproveitamento.' : 'Acompanhando...'}`,
+      `Dia razoável por aqui. ${sc ? sc + ' de conversão — podemos melhorar!' : 'Aguardando mais leads.'}`,
+    ],
+    preocupada: [
+      `Hmm… só ${d.qualificados} qualificados de ${d.total} leads (${sc}). Preciso entender o que tá travando 😟`,
+      `${sc} de conversão — abaixo do esperado. Vou analisar os atendimentos...`,
+    ],
+    frustrada: [
+      `${sc} de aproveitamento com ${d.perdidos} perdidos! Algo tá errado hoje. Me chama pra conversar! 😤`,
+      `Apenas ${d.qualificados} qualificados de ${d.total} leads — ${sc}. Situação crítica, preciso de apoio!`,
+    ],
+    sem_dados: [
+      `Ainda sem dados de hoje. Assim que chegarem os primeiros leads, atualizo você! 😊`,
+      `Aguardando os primeiros atendimentos do dia...`,
+    ],
+  };
+  const pool = msgs[mood] || msgs.neutra;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 async function loadLeadQuality() {
   const badge = document.getElementById('lead-quality-badge');
   const body  = document.getElementById('lead-quality-body');
+  const bubble = document.getElementById('dash-summary');
   if (!badge || !body) return;
   try {
     const d = await fetch('/api/crm/leads/daily-summary').then(r => r.json());
@@ -2339,6 +2383,17 @@ async function loadLeadQuality() {
     badge.textContent = q.label;
     badge.style.background = q.bg;
     badge.style.color = q.color;
+
+    // Atualiza humor e balão de fala com estatísticas reais
+    const realMood = d.total === 0 ? 'neutra' : scoreToMood(d.score);
+    const moodBadge = document.getElementById('dash-mood-badge');
+    if (moodBadge) {
+      moodBadge.textContent = `${MOOD_EMOJIS[realMood]||'😐'} ${realMood}`;
+      moodBadge.style.background = `${MOOD_COLORS[realMood]||'#8696a0'}33`;
+    }
+    applyMoodExpression(document.getElementById('dash-ai-name')?.textContent?.split(' · ')[0] || '', _cfg?.aiAvatarStyle || 'adventurer', realMood);
+    if (bubble) bubble.textContent = buildBubbleMsg(d.total === 0 ? 'sem_dados' : realMood, d);
+
     if (d.total === 0) { body.innerHTML = '<span style="color:var(--wa-muted);">Nenhum lead movimentado hoje.</span>'; return; }
     const sentEmoji = s => s === 'positivo' ? '😊' : s === 'negativo' ? '😞' : '😐';
     const stageLabel = s => ({ novo:'novo', atendimento:'atend.', qualificado:'qualif.', agendado:'agend.', convertido:'conv.', perdido:'perdido', humano:'humano', aguardando:'aguard.' }[s] || s);
