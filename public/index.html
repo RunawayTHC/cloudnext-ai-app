@@ -331,9 +331,9 @@
     .followup-badge { font-size:10px; background:rgba(139,92,246,.1); color:#8b5cf6; border-radius:10px; padding:2px 8px; font-weight:600; }
 
     /* ── DASHBOARD ── */
-    .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:12px 20px; color:white; display:flex; align-items:center; gap:16px; margin-bottom:14px; overflow:hidden; position:relative; min-height:180px; }
-    .dash-avatar-3d { width:100px; height:176px; flex-shrink:0; position:relative; }
-    .dash-avatar-3d canvas { width:100px!important; height:176px!important; display:block; }
+    .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:16px 20px; color:white; display:flex; align-items:center; gap:16px; margin-bottom:14px; overflow:hidden; position:relative; min-height:140px; }
+    .dash-avatar-3d { width:90px; height:140px; flex-shrink:0; position:relative; }
+    .dash-avatar-3d canvas { width:90px!important; height:140px!important; display:block; }
     .dash-avatar-ring { display:none; }
     @keyframes pulse-ring { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.06)} }
     .dash-mood-badge { display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,.2); padding:3px 10px; border-radius:20px; font-size:12px; margin-top:4px; }
@@ -467,7 +467,7 @@
         <!-- Hero Mood Banner -->
         <div class="dash-hero" id="dash-hero">
           <div class="dash-avatar-3d" id="dash-avatar-3d">
-            <canvas id="avatar-canvas" width="100" height="176"></canvas>
+            <canvas id="avatar-canvas" width="90" height="140"></canvas>
           </div>
           <div class="dash-hero-text">
             <h3 id="dash-ai-name">Carregando...</h3>
@@ -2578,14 +2578,14 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const canvas = document.getElementById('avatar-canvas');
 if (!canvas) throw new Error('no avatar-canvas');
 
-const W = 100, H = 176;
+const W = 90, H = 140;
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(W, H, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 50);
+const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 50);
 
 scene.add(new THREE.AmbientLight(0xffffff, 2.2));
 const sun = new THREE.DirectionalLight(0xfff4e0, 3.5);
@@ -2648,17 +2648,13 @@ function loadCharacter(file) {
     // Recompute bounding box in world space AFTER repositioning
     const worldBox = new THREE.Box3().setFromObject(model);
     const h = worldBox.max.y - worldBox.min.y;
-    const topY = worldBox.max.y;   // hat tip in world space
 
-    // Upper-body portrait: camera looks horizontally at chest (65% height).
-    // Calculate distance so that hat (topY + 6% margin) fits in the upper
-    // half of the vertical frustum — no tilt, exact geometry.
-    const lookY = h * 0.65;
-    const halfVFov = (camera.fov / 2) * (Math.PI / 180);
-    const upperHalf = (topY - lookY) * 1.06;   // top of frame = hat + 6% pad
-    const dist = upperHalf / Math.tan(halfVFov);
-    camera.position.set(0, lookY, dist);
-    camera.lookAt(0, lookY, 0);
+    // Show full character (feet to hat) at ~60% of canvas height.
+    // dist = h / (2 * 0.60 * tan(halfFov)) ≈ h*2.0 fills 60% vertically.
+    // lookAt at waist (h*0.50), camera pulled up to h*0.55 so hat clears top.
+    const dist = h * 2.0;
+    camera.position.set(0, h * 0.55, dist);
+    camera.lookAt(0, h * 0.50, 0);
 
     // KEY FIX: use SkinnedMesh as mixer root
     // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
