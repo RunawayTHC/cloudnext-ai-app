@@ -2636,6 +2636,15 @@ function loadCharacter(file) {
 
   loader.load('/models/' + file, gltf => {
     const model = gltf.scene;
+
+    // Normalize all characters to the same scene height so they appear
+    // identical in size regardless of hat height or model proportions.
+    const REF_H = 1.8;
+    const initBox = new THREE.Box3().setFromObject(model);
+    const initH = initBox.max.y - initBox.min.y;
+    model.scale.setScalar(REF_H / initH);
+
+    // Re-center after scaling: feet at y=0, centered on XZ
     const box = new THREE.Box3().setFromObject(model);
     model.position.set(
       -(box.max.x + box.min.x) / 2,
@@ -2645,15 +2654,10 @@ function loadCharacter(file) {
     scene.add(model);
     currentModel = model;
 
-    // Recompute bounding box in world space AFTER repositioning
-    const worldBox = new THREE.Box3().setFromObject(model);
-    const h = worldBox.max.y - worldBox.min.y;
-
-    // lookAt at h*0.72 (chest/shoulder): camera center is HIGH on the character
-    // → body shifts DOWN in canvas, hat appears at ~30% from top (not cut).
-    const dist = h * 2.0;
-    camera.position.set(0, h * 0.85, dist);
-    camera.lookAt(0, h * 0.85, 0);
+    // Fixed camera for all characters (same REF_H → same framing always)
+    const dist = REF_H * 2.0;
+    camera.position.set(0, REF_H * 0.85, dist);
+    camera.lookAt(0, REF_H * 0.85, 0);
 
     // KEY FIX: use SkinnedMesh as mixer root
     // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
