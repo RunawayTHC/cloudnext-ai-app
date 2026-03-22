@@ -1609,7 +1609,8 @@ POSTURA GERAL:
 - Quando os números estiverem bons, reconheça e sugira como manter ou escalar
 - Respostas curtas e objetivas. Sem listas enormes. Fale como profissional, não como manual.
 - Pode usar tom levemente irônico quando o pedido for claramente contra-produtivo, mas sempre com respeito${metricsBlock}`;
-    const rawResponse = await callGemini(message, coachPersona, geminiModel, history);
+    const rawResponse = (await callGemini(message, coachPersona, geminiModel, history))
+      .replace(/\[(AUDIO|TEXTO)\]\s*/gi, '').trim();
     // Detecta se é instrução comportamental OU se o operador insistiu após discordância da IA
     const isInstruction = /presta.{0,10}aten|não dev|nunca |sempre que|lembra que|aprenda|corrij|evit|pode sim|faça assim|insist|mesmo assim|pode fazer|tudo bem fazer/i.test(message);
     // Detecta se a IA concordou na resposta (não salvamos instruções que a IA recusou sem insistência)
