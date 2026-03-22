@@ -346,8 +346,12 @@
     .heatmap-cell:hover::after { content:attr(data-tip); position:absolute; bottom:110%; left:50%; transform:translateX(-50%); background:#111; color:white; font-size:10px; padding:2px 6px; border-radius:4px; white-space:nowrap; z-index:10; }
     .heatmap-labels { display:grid; grid-template-columns:repeat(24,1fr); gap:2px; margin-top:3px; }
     .heatmap-label { font-size:9px; color:var(--wa-muted); text-align:center; }
-    .memory-list { display:flex; flex-direction:column; gap:6px; }
-    .memory-item { display:flex; align-items:flex-start; gap:8px; padding:8px; background:#f8f9fa; border-radius:8px; font-size:12px; }
+    .memory-list { display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto; scroll-behavior:smooth; padding-right:4px; }
+    .memory-list::-webkit-scrollbar { width:4px; }
+    .memory-list::-webkit-scrollbar-track { background:transparent; }
+    .memory-list::-webkit-scrollbar-thumb { background:rgba(0,168,132,.35); border-radius:4px; }
+    .memory-list::-webkit-scrollbar-thumb:hover { background:rgba(0,168,132,.6); }
+    .memory-item { display:flex; align-items:flex-start; gap:8px; padding:8px; background:#f8f9fa; border-radius:8px; font-size:12px; flex-shrink:0; }
     .memory-cat { font-size:10px; font-weight:700; padding:2px 7px; border-radius:20px; flex-shrink:0; margin-top:1px; }
     .cat-linguagem { background:rgba(59,130,246,.12); color:var(--blue); }
     .cat-comportamento { background:rgba(139,92,246,.12); color:#8b5cf6; }
@@ -502,6 +506,15 @@
             </div>
           </div>
           <div>
+            <!-- Lead Quality Summary -->
+            <div class="card" id="lead-quality-card" style="margin-bottom:14px;">
+              <div class="card-label" style="display:flex;align-items:center;justify-content:space-between;">
+                <span>Qualidade dos Leads Hoje</span>
+                <span id="lead-quality-badge" style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;"></span>
+              </div>
+              <div id="lead-quality-body" style="font-size:12px;color:var(--wa-muted);padding:6px 0;">Carregando...</div>
+            </div>
+
             <!-- Memory -->
             <div class="card" style="margin-bottom:14px;">
               <div class="card-label" style="display:flex;align-items:center;justify-content:space-between;">
@@ -827,6 +840,11 @@
               <div class="fg">
                 <label>Limite de Áudios/Dia (0=ilimitado)</label>
                 <input type="number" id="cfg-audio-limit" value="0" min="0" placeholder="0">
+              </div>
+              <div class="fg">
+                <label>Duração Máxima por Áudio (segundos, 0=ilimitado)</label>
+                <input type="number" id="cfg-audio-max-seconds" value="0" min="0" placeholder="0 = ilimitado">
+                <div class="hint">Se o texto não couber numa frase completa, a IA enviará como texto.</div>
               </div>
               <div style="border-top:1px solid var(--border);margin:14px 0 10px;"></div>
               <div class="card-label" style="margin-bottom:10px;">Linguagem da Voz</div>
@@ -1298,6 +1316,7 @@ async function loadConfig(){
   document.getElementById('cfg-ignored').value=(_cfg.ignoredNumbers||[]).join('\n');
   if(_cfg.aiEnabled!==undefined) document.getElementById('cfg-ai-enabled').checked=!!_cfg.aiEnabled;
   if(_cfg.audioDailyLimit!==undefined) document.getElementById('cfg-audio-limit').value=_cfg.audioDailyLimit;
+  if(_cfg.audioMaxSeconds!==undefined) document.getElementById('cfg-audio-max-seconds').value=_cfg.audioMaxSeconds;
   if(_cfg.audioMode) document.getElementById('cfg-audio-mode').value=_cfg.audioMode;
   if(_cfg.audioScheduleStart) document.getElementById('cfg-schedule-start').value=_cfg.audioScheduleStart;
   if(_cfg.audioScheduleEnd) document.getElementById('cfg-schedule-end').value=_cfg.audioScheduleEnd;
@@ -1362,6 +1381,7 @@ async function saveConfig(){
     voiceId:document.getElementById('cfg-voice').value.trim(),
     ignoredNumbers:document.getElementById('cfg-ignored').value.split('\n').map(s=>s.trim()).filter(Boolean),
     audioDailyLimit:+document.getElementById('cfg-audio-limit').value||0,
+    audioMaxSeconds:+document.getElementById('cfg-audio-max-seconds').value||0,
     audioMode:document.getElementById('cfg-audio-mode').value,
     audioScheduleStart:document.getElementById('cfg-schedule-start').value,
     audioScheduleEnd:document.getElementById('cfg-schedule-end').value,
@@ -2241,6 +2261,8 @@ async function loadDashboard() {
     renderFunnel(d.stages || []);
     // Memory
     renderDashMemory(d.memory || []);
+    // Lead quality
+    loadLeadQuality();
   } catch(e) { console.log('[DASH]', e); }
 }
 
@@ -2296,6 +2318,41 @@ function renderDashMemory(memory) {
     </div>`).join('');
 }
 
+async function loadLeadQuality() {
+  const badge = document.getElementById('lead-quality-badge');
+  const body  = document.getElementById('lead-quality-body');
+  if (!badge || !body) return;
+  try {
+    const d = await fetch('/api/crm/leads/daily-summary').then(r => r.json());
+    if (!d.ok) return;
+    const qMap = { bom: { label: '🟢 Bom', bg: 'rgba(0,168,132,.12)', color: 'var(--wa-green)' },
+                   medio: { label: '🟡 Médio', bg: 'rgba(234,179,8,.12)', color: '#d97706' },
+                   ruim:  { label: '🔴 Fraco', bg: 'rgba(239,68,68,.1)',  color: 'var(--red)' },
+                   sem_dados: { label: '⚪ Sem dados', bg: '#f3f4f6', color: 'var(--wa-muted)' } };
+    const q = qMap[d.quality] || qMap.sem_dados;
+    badge.textContent = q.label;
+    badge.style.background = q.bg;
+    badge.style.color = q.color;
+    if (d.total === 0) { body.innerHTML = '<span style="color:var(--wa-muted);">Nenhum lead movimentado hoje.</span>'; return; }
+    const sentEmoji = s => s === 'positivo' ? '😊' : s === 'negativo' ? '😞' : '😐';
+    const stageLabel = s => ({ novo:'novo', atendimento:'atend.', qualificado:'qualif.', agendado:'agend.', convertido:'conv.', perdido:'perdido', humano:'humano', aguardando:'aguard.' }[s] || s);
+    const statsHtml = `<div style="display:flex;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+      <span>📥 <b>${d.total}</b> recebidos</span>
+      <span>✅ <b>${d.qualificados}</b> qualif.</span>
+      <span>❌ <b>${d.perdidos}</b> perdidos</span>
+      ${d.urgentes ? `<span>🔥 <b>${d.urgentes}</b> urgentes</span>` : ''}
+      ${d.score !== null ? `<span style="margin-left:auto;font-weight:700;color:${q.color};">${d.score}% aproveit.</span>` : ''}
+    </div>`;
+    const leadsHtml = d.recentes.map(l => `
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);">
+        <span>${sentEmoji(l.sentiment)}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(l.name)}</span>
+        <span style="font-size:10px;color:var(--wa-muted);flex-shrink:0;">${stageLabel(l.stage)}</span>
+      </div>`).join('');
+    body.innerHTML = statsHtml + leadsHtml;
+  } catch(e) { body.innerHTML = '<span style="color:var(--wa-muted);">Erro ao carregar.</span>'; }
+}
+
 async function deleteMemory(id) {
   await fetch(`/api/ai/memory/${id}`, { method: 'DELETE' });
   loadDashboard();
@@ -2332,14 +2389,32 @@ async function sendAICoach() {
     }).then(r => r.json());
     _coachHistory.push({ role: 'user', text: msg });
     const reply = d.response || 'Erro ao responder.';
-    appendCoachMsg(reply, 'ai', d.savedAsMemory);
+    appendCoachMsg(reply, 'ai', { saved: d.savedAsMemory, suggest: d.suggestSave, summary: d.memorySummary });
     _coachHistory.push({ role: 'model', text: reply });
     if (_coachHistory.length > 20) _coachHistory = _coachHistory.slice(-20);
     if (d.savedAsMemory) setTimeout(() => loadDashboard(), 1000);
   } catch(e) { appendCoachMsg('Erro de conexão.', 'ai'); }
 }
 
-function appendCoachMsg(text, role, saved = false) {
+async function confirmSaveMemory(btn, summary) {
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+  try {
+    await fetch('/api/ai/memory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: summary, category: 'comportamento' })
+    });
+    btn.closest('.ai-coach-save-prompt').innerHTML = '<span style="font-size:11px;color:var(--wa-green);">✓ Salvo na memória</span>';
+    setTimeout(() => loadDashboard(), 800);
+  } catch { btn.textContent = 'Erro'; }
+}
+
+function appendCoachMsg(text, role, meta = {}) {
+  // meta: { saved, suggest, summary } or false/undefined (legacy)
+  const saved   = meta === true || meta?.saved;
+  const suggest = meta?.suggest;
+  const summary = meta?.summary;
   const el = document.getElementById('ai-coach-msgs');
   const div = document.createElement('div');
   div.className = `ai-coach-msg ${role}`;
@@ -2349,6 +2424,18 @@ function appendCoachMsg(text, role, saved = false) {
     s.className = 'ai-coach-saved';
     s.textContent = '✓ Salvo na memória';
     div.appendChild(s);
+  }
+  if (suggest && summary) {
+    const prompt = document.createElement('div');
+    prompt.className = 'ai-coach-save-prompt';
+    prompt.style.cssText = 'margin-top:6px;display:flex;align-items:center;gap:8px;';
+    prompt.innerHTML = `<span style="font-size:11px;color:var(--wa-muted);">Devo guardar na memória?</span>
+      <button onclick="confirmSaveMemory(this,'${summary.replace(/'/g,"\\'")}')">💾 Sim</button>
+      <button onclick="this.closest('.ai-coach-save-prompt').remove()">Não</button>`;
+    prompt.querySelectorAll('button').forEach(b => {
+      b.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:white;cursor:pointer;';
+    });
+    div.appendChild(prompt);
   }
   el.appendChild(div);
   el.scrollTop = el.scrollHeight;

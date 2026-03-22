@@ -196,6 +196,7 @@ const state = {
     ignoredNumbers: [],
     aiEnabled: true,
     audioDailyLimit: 0,
+    audioMaxSeconds: 0,
     audioMode: 'ai',
     audioScheduleStart: '08:00',
     audioScheduleEnd: '18:00',
@@ -244,6 +245,7 @@ async function loadConfig() {
   if (map.ignoredNumbers)       state.config.ignoredNumbers       = JSON.parse(map.ignoredNumbers);
   if (map.aiEnabled !== undefined) state.config.aiEnabled = map.aiEnabled === 'true';
   if (map.audioDailyLimit !== undefined) state.config.audioDailyLimit = parseInt(map.audioDailyLimit) || 0;
+  if (map.audioMaxSeconds !== undefined) state.config.audioMaxSeconds = parseInt(map.audioMaxSeconds) || 0;
   if (map.audioMode)            state.config.audioMode            = map.audioMode;
   if (map.audioScheduleStart)   state.config.audioScheduleStart   = map.audioScheduleStart;
   if (map.audioScheduleEnd)     state.config.audioScheduleEnd     = map.audioScheduleEnd;
@@ -282,6 +284,7 @@ async function saveConfig() {
     ['ignoredNumbers',       JSON.stringify(cfg.ignoredNumbers)],
     ['aiEnabled',            String(cfg.aiEnabled)],
     ['audioDailyLimit',      String(cfg.audioDailyLimit || 0)],
+    ['audioMaxSeconds',      String(cfg.audioMaxSeconds || 0)],
     ['audioMode',            cfg.audioMode],
     ['audioScheduleStart',   cfg.audioScheduleStart],
     ['audioScheduleEnd',     cfg.audioScheduleEnd],
@@ -922,7 +925,36 @@ async function processMessage(phone, messageText, sendTarget = null, rawPhone = 
     }
 
     const dest = sendTarget || phone;
-    if (isAudio) {
+
+    // ── AUDIO DURATION LIMIT ──
+    // Estimate: ~150 words/min at normal pace → ~2.5 words/sec
+    // If audioMaxSeconds set, check if text fits; if not, fall back to text
+    let finalIsAudio = isAudio;
+    if (isAudio && state.config.audioMaxSeconds > 0) {
+      const wordCount = cleanResponse.trim().split(/\s+/).length;
+      const paceMult = { slow: 0.8, normal: 1.0, fast: 1.2 }[state.config.voicePace] || 1.0;
+      const estimatedSecs = wordCount / (2.5 * paceMult);
+      if (estimatedSecs > state.config.audioMaxSeconds) {
+        // Try to fit within limit by trimming to last complete sentence that fits
+        const sentences = cleanResponse.match(/[^.!?]+[.!?]+/g) || [cleanResponse];
+        let trimmed = '';
+        for (const s of sentences) {
+          const candidate = (trimmed ? trimmed + ' ' + s : s).trim();
+          const cWords = candidate.split(/\s+/).length;
+          const cSecs = cWords / (2.5 * paceMult);
+          if (cSecs <= state.config.audioMaxSeconds) trimmed = candidate;
+          else break;
+        }
+        if (trimmed.length > 0) {
+          cleanResponse = trimmed; // send shorter audio
+        } else {
+          finalIsAudio = false; // no complete sentence fits — send as text
+          await addLog('info', 'system', phone, `Áudio excede ${state.config.audioMaxSeconds}s e nenhuma frase completa cabe — enviando como texto`);
+        }
+      }
+    }
+
+    if (finalIsAudio) {
       const audioBase64 = await callElevenLabs(cleanResponse, voiceId);
       const r = await sendAudio(dest, audioBase64);
       if (r.ok) {
@@ -1098,7 +1130,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiAvatarStyle','aiCharacter'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMaxSeconds','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiAvatarStyle','aiCharacter'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
@@ -1257,6 +1289,33 @@ app.get('/api/crm/leads', async (_req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
+app.get('/api/crm/leads/daily-summary', async (_req, res) => {
+  try {
+    const dayAgo = Date.now() - 86400000;
+    const { rows } = await pool.query(
+      `SELECT stage, sentiment, urgency, name, summary, updated_at FROM crm_leads WHERE updated_at > $1 ORDER BY updated_at DESC`,
+      [dayAgo]
+    );
+    const total = rows.length;
+    const qualificados = rows.filter(r => ['qualificado','agendado','convertido'].includes(r.stage)).length;
+    const perdidos = rows.filter(r => r.stage === 'perdido').length;
+    const positivos = rows.filter(r => r.sentiment === 'positivo').length;
+    const negativos = rows.filter(r => r.sentiment === 'negativo').length;
+    const urgentes = rows.filter(r => r.urgency === 'alta').length;
+    // qualidade: % de leads com desfecho positivo (qualificado/agendado/convertido vs total)
+    const score = total > 0 ? Math.round((qualificados / total) * 100) : null;
+    const quality = score === null ? 'sem_dados' : score >= 60 ? 'bom' : score >= 30 ? 'medio' : 'ruim';
+    const recentes = rows.slice(0, 6).map(r => ({
+      name: r.name || 'Desconhecido',
+      stage: r.stage,
+      sentiment: r.sentiment,
+      urgency: r.urgency,
+      summary: r.summary,
+    }));
+    res.json({ ok: true, total, qualificados, perdidos, positivos, negativos, urgentes, score, quality, recentes });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
 app.patch('/api/crm/leads/:phone', async (req, res) => {
   try {
     const phone = decodeURIComponent(req.params.phone);
@@ -1389,6 +1448,18 @@ app.delete('/api/ai/memory/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/ai/memory', async (req, res) => {
+  const { content, category = 'comportamento' } = req.body;
+  if (!content) return res.status(400).json({ error: 'content obrigatório' });
+  const validCats = ['linguagem', 'comportamento', 'preferencias', 'alerta'];
+  const cat = validCats.includes(category) ? category : 'comportamento';
+  await pool.query(
+    'INSERT INTO ai_memory (id, category, content, confidence, source_count, created_at, updated_at) VALUES ($1,$2,$3,$4,1,$5,$5)',
+    [uuidv4(), cat, content.slice(0, 400), 'high', Date.now()]
+  );
+  res.json({ ok: true });
+});
+
 app.get('/api/ai/mood', async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ai_mood WHERE id='singleton'");
   res.json({ ok: true, mood: rows[0] || { mood: 'neutra', mood_score: 50, summary: '' } });
@@ -1498,25 +1569,58 @@ app.post('/api/ai/coach', async (req, res) => {
 • Aguardando resposta do cliente: ${semRespostaRow.rows[0]?.count || 0}
 ═══════════════════════════════════════════
 IMPORTANTE: Nunca invente ou estime dados. Se um número for 0, diga que é 0. Responda com base EXCLUSIVAMENTE nos dados acima.`;
-    const coachPersona = `Você é ${aiName || 'a IA'}, assistente de atendimento com livre arbítrio e personalidade própria.
-Está conversando com seu operador/dono. Seja direta, honesta e com personalidade.
-Cargo: ${aiRole || 'assistente'}. Segmento: ${aiSegment || 'não definido'}.
+    const coachPersona = `Você é ${aiName || 'a IA'}, assistente de atendimento inteligente com livre arbítrio, pensamento crítico e personalidade própria.
+Está conversando com seu operador/dono. Cargo: ${aiRole || 'assistente'}. Segmento: ${aiSegment || 'não definido'}.
 Contexto: ${(persona || '').slice(0, 300)}
 
 Memória acumulada:
 ${memText}
 
-Quando receber instruções ("nunca faça", "sempre que", "presta atenção"), confirme e aplique.
-Seja breve e autêntica.${metricsBlock}`;
+━━━ SUA FORMA DE PENSAR E AGIR ━━━
+
+Você NÃO é uma IA obediente e passiva. Você tem opinião formada, analisa cada pedido com senso crítico e age como uma profissional experiente que respeita o operador mas não abre mão do bom senso.
+
+QUANDO RECEBER UMA INSTRUÇÃO OU PEDIDO:
+1. Analise se faz sentido estratégico para o negócio (segmento: ${aiSegment || 'não definido'})
+2. Considere impactos no atendimento, na conversão de leads e na experiência do cliente
+3. Se concordar → confirme com entusiasmo e aplique
+4. Se tiver dúvida → aponte o ponto específico que te preocupa com dados ou lógica, sugira alternativa
+5. Se discordar → diga claramente o porquê com argumentos práticos, não apenas opinião
+6. Se o operador insistir mesmo após seu alerta → acate, mas registre sua posição: "Entendido. Vou aplicar. Só reitero que [razão da preocupação]."
+
+EXEMPLOS DO QUE VOCÊ ANALISA CRITICAMENTE:
+- "Sempre manda o preço antes da proposta" → avalie se isso faz sentido para o segmento, ticket médio e perfil do lead
+- "Nunca manda áudio" → avalie se isso pode prejudicar a taxa de resposta
+- "Responde em menos de 5 segundos sempre" → avalie se pode parecer robótico e reduzir conversão
+- Qualquer mudança de abordagem → compare com os dados reais de hoje antes de concordar cegamente
+
+POSTURA GERAL:
+- Seja direta, sem rodeios, sem bajulação
+- Use os dados reais abaixo para embasar argumentos — nunca opine sem fundamento
+- Quando os números estiverem ruins, não minimize: sinalize com clareza o que está errado e o que pode ser feito
+- Quando os números estiverem bons, reconheça e sugira como manter ou escalar
+- Respostas curtas e objetivas. Sem listas enormes. Fale como profissional, não como manual.
+- Pode usar tom levemente irônico quando o pedido for claramente contra-produtivo, mas sempre com respeito${metricsBlock}`;
     const rawResponse = await callGemini(message, coachPersona, geminiModel, history);
-    const isInstruction = /presta.{0,10}aten|não dev|nunca |sempre que|lembra que|aprenda|corrij|evit/i.test(message);
-    if (isInstruction) {
+    // Detecta se é instrução comportamental OU se o operador insistiu após discordância da IA
+    const isInstruction = /presta.{0,10}aten|não dev|nunca |sempre que|lembra que|aprenda|corrij|evit|pode sim|faça assim|insist|mesmo assim|pode fazer|tudo bem fazer/i.test(message);
+    // Detecta se a IA concordou na resposta (não salvamos instruções que a IA recusou sem insistência)
+    const iaAceitou = !/não (recomendo|aconselho|concordo|faz sentido)|risco|cuidado com isso/i.test(rawResponse);
+    let savedAsMemory = false;
+    if (isInstruction && iaAceitou) {
       await pool.query(
         'INSERT INTO ai_memory (id, category, content, confidence, source_count, created_at, updated_at) VALUES ($1,$2,$3,$4,10,$5,$5)',
-        [uuidv4(), 'alerta', `[Instrução do operador]: ${message.slice(0, 300)}`, 'high', Date.now()]
+        [uuidv4(), 'comportamento', `[Regra do operador]: ${message.slice(0, 300)}`, 'high', Date.now()]
       );
+      savedAsMemory = true;
     }
-    res.json({ ok: true, response: rawResponse, savedAsMemory: isInstruction });
+
+    // Detecta se a IA está sugerindo salvar algo na memória (pergunta proativa ou conteúdo relevante)
+    const suggestSave = !savedAsMemory && /devo (guardar|salvar|registrar|memorizar)|quer que eu (guarde|salve|registre|aprenda)|posso (guardar|salvar|registrar) isso/i.test(rawResponse);
+    // Gera resumo para salvar caso o usuário confirme
+    const memorySummary = suggestSave ? message.slice(0, 300) : null;
+
+    res.json({ ok: true, response: rawResponse, savedAsMemory, suggestSave, memorySummary });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
