@@ -2652,8 +2652,8 @@ function loadCharacter(file) {
     // lookAt at h*0.72 (chest/shoulder): camera center is HIGH on the character
     // → body shifts DOWN in canvas, hat appears at ~30% from top (not cut).
     const dist = h * 2.0;
-    camera.position.set(0, h * 0.72, dist);
-    camera.lookAt(0, h * 0.72, 0);
+    camera.position.set(0, h * 0.85, dist);
+    camera.lookAt(0, h * 0.85, 0);
 
     // KEY FIX: use SkinnedMesh as mixer root
     // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
