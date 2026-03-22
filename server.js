@@ -214,6 +214,9 @@ const state = {
     restrictAIOutsideHours: false,
     noreplyFollowupEnabled: false,
     noreplyFollowupSteps: [],
+    apptFollowupEnabled: false,
+    apptFollowupOffsetMin: 60,
+    apptFollowupMsg: '',
     aiName: '',
     aiNickname: '',
     aiAge: '',
@@ -263,6 +266,9 @@ async function loadConfig() {
   if (map.restrictAIOutsideHours !== undefined) state.config.restrictAIOutsideHours = map.restrictAIOutsideHours === 'true';
   if (map.noreplyFollowupEnabled !== undefined) state.config.noreplyFollowupEnabled = map.noreplyFollowupEnabled === 'true';
   if (map.noreplyFollowupSteps) { try { state.config.noreplyFollowupSteps = JSON.parse(map.noreplyFollowupSteps); } catch {} }
+  if (map.apptFollowupEnabled !== undefined) state.config.apptFollowupEnabled = map.apptFollowupEnabled === 'true';
+  if (map.apptFollowupOffsetMin !== undefined) state.config.apptFollowupOffsetMin = parseInt(map.apptFollowupOffsetMin) || 60;
+  if (map.apptFollowupMsg !== undefined) state.config.apptFollowupMsg = map.apptFollowupMsg;
   if (map.aiName !== undefined)     state.config.aiName     = map.aiName;
   if (map.aiNickname !== undefined) state.config.aiNickname = map.aiNickname;
   if (map.aiAge !== undefined)      state.config.aiAge      = map.aiAge;
@@ -302,6 +308,9 @@ async function saveConfig() {
     ['restrictAIOutsideHours',   String(cfg.restrictAIOutsideHours)],
     ['noreplyFollowupEnabled',   String(cfg.noreplyFollowupEnabled || false)],
     ['noreplyFollowupSteps',     JSON.stringify(cfg.noreplyFollowupSteps || [])],
+    ['apptFollowupEnabled',      String(cfg.apptFollowupEnabled || false)],
+    ['apptFollowupOffsetMin',    String(cfg.apptFollowupOffsetMin || 60)],
+    ['apptFollowupMsg',          cfg.apptFollowupMsg || ''],
     ['aiName',     cfg.aiName     || ''],
     ['aiNickname', cfg.aiNickname || ''],
     ['aiAge',      cfg.aiAge      || ''],
@@ -554,16 +563,15 @@ ${convText}`;
         json.stage || 'atendimento', json.summary || '', json.urgency || 'normal', json.sentiment || 'neutro',
         appointmentAt, json.appointment_notes || null, now]);
 
-    // Schedule follow-up if appointment detected
+    // Schedule follow-up if appointment detected (uses global config from Treinar IA)
     if (appointmentAt && appointmentAt > now) {
-      const lead = await pool.query('SELECT followup_enabled, followup_offset_min, followup_msg FROM crm_leads WHERE phone=$1', [phone]);
-      const l = lead.rows[0];
-      if (l?.followup_enabled && l.followup_msg) {
-        const scheduledAt = appointmentAt - (l.followup_offset_min * 60 * 1000);
+      const { apptFollowupEnabled, apptFollowupOffsetMin, apptFollowupMsg } = state.config;
+      if (apptFollowupEnabled && apptFollowupMsg) {
+        const scheduledAt = appointmentAt - ((apptFollowupOffsetMin || 60) * 60 * 1000);
         if (scheduledAt > now) {
           await pool.query(
             'INSERT INTO crm_followups (id, phone, scheduled_at, message, type, sent, created_at) VALUES ($1,$2,$3,$4,$5,false,$6) ON CONFLICT DO NOTHING',
-            [uuidv4(), phone, scheduledAt, l.followup_msg, 'appointment', now]
+            [uuidv4(), phone, scheduledAt, apptFollowupMsg, 'appointment', now]
           ).catch(() => {});
         }
       }
@@ -1130,7 +1138,7 @@ app.delete('/api/instance/logout', async (req, res) => {
 app.get('/api/config', (req, res) => res.json(state.config));
 
 app.post('/api/config', async (req, res) => {
-  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMaxSeconds','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','aiName','aiNickname','aiAge','aiRole','aiSegment','aiAvatarStyle','aiCharacter'];
+  const allowed = ['persona','geminiModel','voiceId','delayMin','delayMax','audioRoutingEnabled','ignoredNumbers','aiEnabled','audioDailyLimit','audioMaxSeconds','audioMode','audioScheduleStart','audioScheduleEnd','signatureEnabled','signatureName','signatureRole','voiceStyle','voicePace','businessHoursEnabled','businessHoursStart','businessHoursEnd','businessHoursMsg','restrictAIOutsideHours','pauseOnHumanEnabled','pauseOnHumanTimeout','noreplyFollowupEnabled','noreplyFollowupSteps','apptFollowupEnabled','apptFollowupOffsetMin','apptFollowupMsg','aiName','aiNickname','aiAge','aiRole','aiSegment','aiAvatarStyle','aiCharacter'];
   allowed.forEach(k => { if (req.body[k] !== undefined) state.config[k] = req.body[k]; });
   await saveConfig();
   await addLog('info', 'system', null, 'Configuração atualizada');
@@ -1766,8 +1774,13 @@ app.listen(PORT, async () => {
       }
       // 2. Noreply follow-ups (no client response after AI message)
       if (state.config.noreplyFollowupEnabled && state.config.noreplyFollowupSteps?.length) {
+        // Only fire for leads in 'atendimento' or 'aguardando' stages
         const { rows: convs } = await pool.query(
-          'SELECT phone, last_ai_at, last_user_at FROM conversations WHERE last_ai_at IS NOT NULL'
+          `SELECT c.phone, c.last_ai_at, c.last_user_at
+           FROM conversations c
+           INNER JOIN crm_leads l ON l.phone = c.phone
+           WHERE c.last_ai_at IS NOT NULL
+             AND l.stage IN ('atendimento', 'aguardando')`
         );
         for (const conv of convs) {
           const lastAiAt = Number(conv.last_ai_at);

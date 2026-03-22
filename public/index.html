@@ -897,12 +897,29 @@
             <div class="card">
               <div class="card-label">Follow-up para Não-Respondidos</div>
               <div class="toggle-row" style="margin-bottom:10px;">
-                <div class="toggle-info"><h4>Ativar follow-up automático</h4><p>Envia mensagem se cliente não responder após a IA</p></div>
+                <div class="toggle-info"><h4>Ativar follow-up automático</h4><p>Envia mensagem se cliente não responder após a IA</p><p style="margin-top:3px;font-size:11px;color:var(--wa-green);font-weight:600;">Apenas leads em "Em Atendimento" ou "Aguardando Retorno"</p></div>
                 <label class="toggle"><input type="checkbox" id="cfg-noreply-enabled" onchange="toggleNoreplyFields()"><span class="slider"></span></label>
               </div>
               <div id="noreply-fields" style="display:none;">
                 <div id="noreply-steps-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
                 <button class="btn btn-ghost" onclick="addNoreplyStep()" style="width:100%;font-size:12px;">+ Adicionar tentativa</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-label">Follow-up de Agendamento</div>
+              <div class="toggle-row" style="margin-bottom:10px;">
+                <div class="toggle-info"><h4>Ativar lembrete de agendamento</h4><p>Envia mensagem automática antes do horário agendado do lead</p></div>
+                <label class="toggle"><input type="checkbox" id="cfg-appt-followup-enabled" onchange="toggleApptFollowupFields()"><span class="slider"></span></label>
+              </div>
+              <div id="appt-followup-fields" style="display:none;">
+                <div class="fg">
+                  <label>Minutos antes do agendamento</label>
+                  <input type="number" id="cfg-appt-followup-offset" value="60" min="5" placeholder="60">
+                </div>
+                <div class="fg">
+                  <label>Mensagem de lembrete</label>
+                  <textarea id="cfg-appt-followup-msg" rows="3" placeholder="ex: Olá {nome}! Lembrando que temos um agendamento hoje. Até logo!"></textarea>
+                </div>
               </div>
             </div>
             <div class="card">
@@ -1084,23 +1101,6 @@
           <div class="fg" style="flex:1;margin-bottom:0;">
             <label>Notas</label>
             <input type="text" id="lead-appt-notes" placeholder="ex: Visita técnica">
-          </div>
-        </div>
-      </div>
-      <div class="lead-section">
-        <div class="lead-section-title">Follow-up automático</div>
-        <div class="toggle-row">
-          <div class="toggle-info"><h4>Ativar follow-up</h4><p>Envia mensagem automaticamente antes do agendamento</p></div>
-          <label class="toggle"><input type="checkbox" id="lead-followup-enabled"><span class="slider"></span></label>
-        </div>
-        <div id="lead-followup-config" style="display:none;margin-top:10px;">
-          <div class="fg">
-            <label>Minutos antes do agendamento</label>
-            <input type="number" id="lead-followup-offset" value="60" min="5" placeholder="60">
-          </div>
-          <div class="fg">
-            <label>Mensagem de follow-up</label>
-            <textarea id="lead-followup-msg" rows="3" placeholder="ex: Olá {nome}! Lembrando que temos um agendamento hoje. Até logo!"></textarea>
           </div>
         </div>
       </div>
@@ -1344,6 +1344,11 @@ async function loadConfig(){
   document.getElementById('noreply-fields').style.display = noreplyEnabled ? 'block' : 'none';
   _noreplySteps = Array.isArray(_cfg.noreplyFollowupSteps) ? _cfg.noreplyFollowupSteps : [];
   renderNoreplySteps();
+  const apptFuEnabled = !!_cfg.apptFollowupEnabled;
+  document.getElementById('cfg-appt-followup-enabled').checked = apptFuEnabled;
+  document.getElementById('appt-followup-fields').style.display = apptFuEnabled ? 'block' : 'none';
+  if (_cfg.apptFollowupOffsetMin !== undefined) document.getElementById('cfg-appt-followup-offset').value = _cfg.apptFollowupOffsetMin;
+  document.getElementById('cfg-appt-followup-msg').value = _cfg.apptFollowupMsg || '';
   // Identity fields
   if (_cfg.aiName !== undefined) {
     document.getElementById('cfg-ai-name').value = _cfg.aiName || '';
@@ -1399,6 +1404,9 @@ async function saveConfig(){
     restrictAIOutsideHours:document.getElementById('cfg-restrict-hours').checked,
     noreplyFollowupEnabled:document.getElementById('cfg-noreply-enabled').checked,
     noreplyFollowupSteps:_noreplySteps,
+    apptFollowupEnabled:document.getElementById('cfg-appt-followup-enabled').checked,
+    apptFollowupOffsetMin:+document.getElementById('cfg-appt-followup-offset').value||60,
+    apptFollowupMsg:document.getElementById('cfg-appt-followup-msg').value.trim(),
     aiName:     document.getElementById('cfg-ai-name')?.value || '',
     aiNickname: document.getElementById('cfg-ai-nickname')?.value || '',
     aiAge:      document.getElementById('cfg-ai-age')?.value || '',
@@ -1422,6 +1430,9 @@ function toggleScheduleFields(){
 let _noreplySteps = [];
 function toggleNoreplyFields() {
   document.getElementById('noreply-fields').style.display = document.getElementById('cfg-noreply-enabled').checked ? 'block' : 'none';
+}
+function toggleApptFollowupFields() {
+  document.getElementById('appt-followup-fields').style.display = document.getElementById('cfg-appt-followup-enabled').checked ? 'block' : 'none';
 }
 function noreplyDisplayValue(delayHours) {
   if (delayHours < 1) return { val: Math.round(delayHours * 60), unit: 'min' };
@@ -1815,13 +1826,6 @@ function openLeadModal(phone) {
     document.getElementById('lead-appt-dt').value = '';
   }
   document.getElementById('lead-appt-notes').value = lead.appointment_notes || '';
-  document.getElementById('lead-followup-enabled').checked = lead.followup_enabled || false;
-  document.getElementById('lead-followup-offset').value = lead.followup_offset_min || 60;
-  document.getElementById('lead-followup-msg').value = lead.followup_msg || '';
-  document.getElementById('lead-followup-config').style.display = lead.followup_enabled ? 'block' : 'none';
-  document.getElementById('lead-followup-enabled').onchange = function() {
-    document.getElementById('lead-followup-config').style.display = this.checked ? 'block' : 'none';
-  };
   // Show "Retomar IA" button if contact is in humano stage or paused
   const resumeBtn = document.getElementById('lead-resume-btn');
   resumeBtn.style.display = (lead.stage === 'humano') ? 'inline-flex' : 'none';
@@ -1841,9 +1845,6 @@ async function saveLeadModal() {
   const summary = document.getElementById('lead-summary').value;
   const apptDt = document.getElementById('lead-appt-dt').value;
   const apptNotes = document.getElementById('lead-appt-notes').value;
-  const followupEnabled = document.getElementById('lead-followup-enabled').checked;
-  const followupOffset = parseInt(document.getElementById('lead-followup-offset').value) || 60;
-  const followupMsg = document.getElementById('lead-followup-msg').value;
   await fetch('/api/crm/leads/' + encodeURIComponent(phone), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -1851,9 +1852,6 @@ async function saveLeadModal() {
       stage, summary,
       appointment_at: apptDt ? new Date(apptDt).getTime() : null,
       appointment_notes: apptNotes || null,
-      followup_enabled: followupEnabled,
-      followup_offset_min: followupOffset,
-      followup_msg: followupMsg
     })
   });
   document.getElementById('lead-modal').classList.remove('open');
