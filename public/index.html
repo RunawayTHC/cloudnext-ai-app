@@ -2598,23 +2598,26 @@ const allClips = {};
 let mixer = null, currentAction = null, ready = false, pendingMood = 'neutra';
 let currentModel = null, bobAngle = 0, actionTimer = null;
 
-// Mood → animation pool (tries in order, first found wins)
+// Mood → animation (mapped to real clip names)
 const MOOD_ANIMS = {
-  animada:    { clips: ['Jump', 'Cheer', 'Spawn_Ground'], loop: false, then: 'Idle_B' },
-  otimista:   { clips: ['Idle_B'],                        loop: true  },
-  neutra:     { clips: ['Idle_A'],                        loop: true  },
-  preocupada: { clips: ['Interact', 'Idle_A'],            loop: true  },
-  frustrada:  { clips: ['Hit_A'],                         loop: false, then: 'Idle_A' },
+  animada:    { clips: ['Jump_Full_Short'],  loop: false, then: 'Idle_B' },
+  otimista:   { clips: ['Idle_B'],           loop: true  },
+  neutra:     { clips: ['Idle_A'],           loop: true  },
+  preocupada: { clips: ['Interact'],         loop: true  },
+  frustrada:  { clips: ['Hit_A'],            loop: false, then: 'Idle_A' },
 };
 
-// Periodic action pool per character — same rig, but visually different mesh
+// Periodic weapon/action pool per character (real clip names)
+// Throw = parece arremessar / disparar arma
+// Use_Item = usa item / weapon ready
+// Pickup = pega algo do chão (weapon pickup)
 const CHAR_ACTIONS = {
-  'Ranger.glb':       ['Attack_A', 'Attack_B', 'Interact'],
-  'Knight.glb':       ['Attack_A', 'Attack_B', 'Hit_A'],
-  'Mage.glb':         ['Attack_A', 'Spawn_Ground', 'Interact'],
-  'Barbarian.glb':    ['Attack_A', 'Attack_B', 'Hit_A'],
-  'Rogue.glb':        ['Attack_A', 'Dodge', 'Interact'],
-  'Rogue_Hooded.glb': ['Attack_A', 'Dodge', 'Interact'],
+  'Ranger.glb':       ['Throw', 'Use_Item', 'Pickup'],       // disparo de flecha
+  'Knight.glb':       ['Throw', 'Use_Item', 'Hit_B'],        // golpe de espada
+  'Mage.glb':         ['Throw', 'Use_Item', 'Interact'],     // conjuro mágico
+  'Barbarian.glb':    ['Throw', 'Hit_A', 'Hit_B'],           // ataque bárbaro
+  'Rogue.glb':        ['Throw', 'Pickup', 'Use_Item'],       // ataque rápido
+  'Rogue_Hooded.glb': ['Throw', 'Pickup', 'Use_Item'],
 };
 
 // Return first available clip from name list, fallback to Idle_A
@@ -2666,10 +2669,10 @@ function scheduleAction() {
   }, 9000 + Math.random() * 7000);   // every 9–16 s
 }
 
-// On load: greet with wave → mood idle → periodic actions
+// On load: greeting sequence Interact → mood idle → periodic actions
 function playWelcome() {
-  const wave = tryClip('Wave', 'Wave_A', 'Wave_B', 'Spawn_Ground', 'Interact');
-  crossfade(wave, false, idleClip(pendingMood));
+  // No Wave clip exists; Interact looks like "acknowledging / greeting"
+  crossfade(tryClip('Interact'), false, idleClip(pendingMood));
   scheduleAction();
 }
 
