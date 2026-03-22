@@ -91,6 +91,16 @@
     .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     @media(max-width:900px){.two-col{grid-template-columns:1fr}.stats-row{grid-template-columns:1fr 1fr}}
 
+    /* ── PERIOD FILTER ── */
+    .period-bar { display:flex; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+    .period-btn { font-size:12px; padding:4px 12px; border-radius:20px; border:1px solid #e0e0e0; background:white; color:var(--wa-muted); cursor:pointer; transition:all .15s; }
+    .period-btn.active { background:var(--wa-green); color:white; border-color:var(--wa-green); font-weight:600; }
+    .period-btn:hover:not(.active) { background:#f0faf7; border-color:var(--wa-green); color:var(--wa-green); }
+    .period-custom { display:flex; align-items:center; gap:4px; margin-left:4px; }
+    .period-custom input[type=date] { font-size:12px; padding:3px 8px; border:1px solid #e0e0e0; border-radius:6px; color:#333; }
+    .period-custom button { font-size:12px; padding:4px 10px; border-radius:6px; border:none; background:var(--wa-green); color:white; cursor:pointer; }
+    .period-label { font-size:11px; color:var(--wa-muted); margin-left:4px; }
+
     /* ── STATS ── */
     .stats-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 14px; }
     .stat { background: white; border-radius: var(--r); padding: 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.07); }
@@ -478,9 +488,23 @@
             <div class="speech-bubble" id="dash-summary">Carregando...</div>
           </div>
         </div>
+        <!-- Period Filter -->
+        <div class="period-bar">
+          <button class="period-btn active" onclick="setPeriod('hoje')">Hoje</button>
+          <button class="period-btn" onclick="setPeriod('ontem')">Ontem</button>
+          <button class="period-btn" onclick="setPeriod('semana')">Esta semana</button>
+          <button class="period-btn" onclick="setPeriod('mes')">Este mês</button>
+          <div class="period-custom" id="period-custom-wrap" style="display:none;">
+            <input type="date" id="period-from-input">
+            <span style="font-size:12px;color:#999;">até</span>
+            <input type="date" id="period-to-input">
+            <button onclick="applyCustomPeriod()">Aplicar</button>
+          </div>
+          <button class="period-btn" onclick="setPeriod('custom')" id="period-btn-custom">Personalizado</button>
+        </div>
         <!-- Quick Stats Row 1 -->
         <div class="stats-row" style="margin-bottom:8px;">
-          <div class="stat"><div class="stat-label">Mensagens Hoje</div><div class="stat-value c-green" id="st-msg-hoje">0</div><div class="stat-sub">recebidas</div></div>
+          <div class="stat"><div class="stat-label" id="lbl-msg-hoje">Mensagens Hoje</div><div class="stat-value c-green" id="st-msg-hoje">0</div><div class="stat-sub">recebidas</div></div>
           <div class="stat"><div class="stat-label">Total Leads</div><div class="stat-value c-blue" id="st-leads-total">0</div><div class="stat-sub">no CRM</div></div>
           <div class="stat"><div class="stat-label">Qualificados</div><div class="stat-value" style="color:#00a884" id="st-qualificados">0</div><div class="stat-sub">prontos p/ fechar</div></div>
           <div class="stat"><div class="stat-label">Agendados</div><div class="stat-value" style="color:#8b5cf6" id="st-agendados">0</div><div class="stat-sub">visitas/reuniões</div></div>
@@ -515,7 +539,7 @@
             <!-- Lead Quality Summary -->
             <div class="card" id="lead-quality-card" style="margin-bottom:14px;">
               <div class="card-label" style="display:flex;align-items:center;justify-content:space-between;">
-                <span>Qualidade dos Leads Hoje</span>
+                <span id="lbl-lead-quality">Qualidade dos Leads Hoje</span>
                 <span id="lead-quality-badge" style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;"></span>
               </div>
               <div id="lead-quality-body" style="font-size:12px;color:var(--wa-muted);padding:6px 0;">Carregando...</div>
@@ -2232,9 +2256,78 @@ const MOOD_COLORS = { animada:'#10b981', otimista:'#00a884', neutra:'#8696a0', p
 const STAGE_COLORS = { novo:'#8696a0', atendimento:'#3b82f6', aguardando:'#f59e0b', qualificado:'#00a884', agendado:'#8b5cf6', humano:'#ef4444', convertido:'#10b981', perdido:'#6b7280' };
 const STAGE_NAMES  = { novo:'Novo', atendimento:'Em Atendimento', aguardando:'Aguardando', qualificado:'Qualificado', agendado:'Agendado', humano:'Atend. Humano', convertido:'Convertido', perdido:'Perdido' };
 
+// ── PERIOD FILTER ──
+let _period = { from: null, to: null, key: 'hoje', label: 'Hoje' };
+
+function brazilTodayStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+function brazilDayStartClient(dateStr) {
+  const d = dateStr || brazilTodayStr();
+  return new Date(d + 'T03:00:00.000Z').getTime();
+}
+function setPeriod(key) {
+  const today = brazilTodayStr();
+  const [ty, tm] = today.split('-');
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+
+  if (key === 'custom') {
+    document.getElementById('period-custom-wrap').style.display = 'flex';
+    document.getElementById('period-btn-custom').classList.add('active');
+    // Pre-fill with today
+    document.getElementById('period-from-input').value = today;
+    document.getElementById('period-to-input').value = today;
+    return;
+  }
+  document.getElementById('period-custom-wrap').style.display = 'none';
+
+  const btnMap = { hoje: 0, ontem: 1, semana: 2, mes: 3 };
+  const btns = document.querySelectorAll('.period-btn');
+  if (btnMap[key] !== undefined) btns[btnMap[key]].classList.add('active');
+
+  let from, to = Date.now(), label;
+  if (key === 'hoje') {
+    from = brazilDayStartClient(today); label = 'Hoje';
+  } else if (key === 'ontem') {
+    const yStart = brazilDayStartClient(today) - 86400000;
+    const yDate = new Date(yStart + 10800000).toISOString().slice(0,10); // +3h to stay in Brazil day
+    from = brazilDayStartClient(yDate);
+    to   = brazilDayStartClient(today) - 1;
+    label = 'Ontem';
+  } else if (key === 'semana') {
+    const d = new Date(brazilDayStartClient(today) + 10800000);
+    const dow = d.getUTCDay() || 7; // 1=Mon
+    const monday = new Date(d - (dow - 1) * 86400000);
+    from = brazilDayStartClient(monday.toISOString().slice(0,10));
+    label = 'Esta semana';
+  } else if (key === 'mes') {
+    from = brazilDayStartClient(`${ty}-${tm}-01`);
+    label = 'Este mês';
+  }
+  _period = { from, to, key, label };
+  document.getElementById('lbl-msg-hoje').textContent = key === 'hoje' ? 'Mensagens Hoje' : `Mensagens (${label})`;
+  const lqlEl = document.getElementById('lbl-lead-quality');
+  if (lqlEl) lqlEl.textContent = key === 'hoje' ? 'Qualidade dos Leads Hoje' : `Qualidade dos Leads — ${label}`;
+  loadDashboard();
+}
+function applyCustomPeriod() {
+  const f = document.getElementById('period-from-input').value;
+  const t = document.getElementById('period-to-input').value;
+  if (!f || !t) return;
+  const from = brazilDayStartClient(f);
+  const to   = brazilDayStartClient(t) + 86400000 - 1;
+  const label = f === t ? f : `${f} → ${t}`;
+  _period = { from, to, key: 'custom', label };
+  document.getElementById('lbl-msg-hoje').textContent = `Mensagens (${label})`;
+  const lqlEl3 = document.getElementById('lbl-lead-quality');
+  if (lqlEl3) lqlEl3.textContent = `Qualidade dos Leads — ${label}`;
+  loadDashboard();
+}
+
 async function loadDashboard() {
   try {
-    const d = await fetch('/api/dashboard').then(r=>r.json());
+    const qs = _period.from ? `?from=${_period.from}&to=${_period.to || Date.now()}` : '';
+    const d = await fetch('/api/dashboard' + qs).then(r=>r.json());
     if (!d.ok) return;
     const cfg = await fetch('/api/config').then(r=>r.json());
     const aiName = cfg.aiName || 'IA';
@@ -2401,7 +2494,8 @@ async function loadLeadQuality() {
   const bubble = document.getElementById('dash-summary');
   if (!badge || !body) return;
   try {
-    const d = await fetch('/api/crm/leads/daily-summary').then(r => r.json());
+    const qs = _period.from ? `?from=${_period.from}&to=${_period.to || Date.now()}` : '';
+    const d = await fetch('/api/crm/leads/daily-summary' + qs).then(r => r.json());
     if (!d.ok) return;
     const qMap = { bom: { label: '🟢 Bom', bg: 'rgba(0,168,132,.12)', color: 'var(--wa-green)' },
                    medio: { label: '🟡 Médio', bg: 'rgba(234,179,8,.12)', color: '#d97706' },

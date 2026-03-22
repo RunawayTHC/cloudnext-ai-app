@@ -766,6 +766,17 @@ function getBrazilDate() {
   return new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 }
 
+// Returns Unix ms for midnight of a given date (YYYY-MM-DD) in Sao Paulo time.
+// Brazil is permanently UTC-3 since DST was abolished in 2019.
+function brazilDayStart(dateStr) {
+  const d = dateStr || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  return new Date(d + 'T03:00:00.000Z').getTime(); // UTC 03:00 = Brazil 00:00
+}
+function brazilDayEnd(dateStr) {
+  const d = dateStr || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  return new Date(d + 'T03:00:00.000Z').getTime() + 86400000 - 1;
+}
+
 function getBrazilTimeStr() {
   return new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false });
 }
@@ -1297,12 +1308,13 @@ app.get('/api/crm/leads', async (_req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
-app.get('/api/crm/leads/daily-summary', async (_req, res) => {
+app.get('/api/crm/leads/daily-summary', async (req, res) => {
   try {
-    const dayAgo = Date.now() - 86400000;
+    const from = Number(req.query.from) || brazilDayStart();
+    const to   = Number(req.query.to)   || Date.now();
     const { rows } = await pool.query(
-      `SELECT stage, sentiment, urgency, name, summary, updated_at FROM crm_leads WHERE updated_at > $1 ORDER BY updated_at DESC`,
-      [dayAgo]
+      `SELECT stage, sentiment, urgency, name, summary, updated_at FROM crm_leads WHERE updated_at >= $1 AND updated_at <= $2 ORDER BY updated_at DESC`,
+      [from, to]
     );
     const total = rows.length;
     const qualificados = rows.filter(r => ['qualificado','agendado','convertido'].includes(r.stage)).length;
@@ -1486,21 +1498,21 @@ app.post('/api/ai/report/generate', async (req, res) => {
 app.get('/api/dashboard', async (req, res) => {
   try {
     const now = Date.now();
-    const dayAgo = now - 86400000;
+    const from = Number(req.query.from) || brazilDayStart();
+    const to   = Number(req.query.to)   || now;
     const weekAgo = now - 604800000;
     const [moodRows, totalRow, heatmap, memory, report, stages, msgToday, metricsRow, semRespostaRow] = await Promise.all([
       pool.query("SELECT * FROM ai_mood WHERE id='singleton'"),
       pool.query('SELECT COUNT(*)::int as count FROM crm_leads'),
-      // Heatmap: use type='message' to avoid counting system logs; group by hour
       pool.query(`SELECT EXTRACT(HOUR FROM to_timestamp(ts/1000) AT TIME ZONE 'America/Sao_Paulo')::int as hour, COUNT(*)::int as count
         FROM app_logs WHERE type='message' AND direction='in' AND ts > $1 GROUP BY hour ORDER BY hour`, [weekAgo]),
       pool.query('SELECT id, category, content, source_count FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 12'),
       pool.query('SELECT * FROM ai_reports ORDER BY created_at DESC LIMIT 1'),
       pool.query('SELECT stage, COUNT(*)::int as count FROM crm_leads GROUP BY stage'),
-      // "Mensagens hoje" = unique contacts who sent a message today (deduplicated via conversations table)
-      pool.query('SELECT COUNT(*)::int as count FROM conversations WHERE last_user_at > $1', [dayAgo]),
+      // Mensagens = contatos únicos que enviaram no período selecionado
+      pool.query('SELECT COUNT(*)::int as count FROM conversations WHERE last_user_at >= $1 AND last_user_at <= $2', [from, to]),
       pool.query(`SELECT
-        COUNT(*) FILTER (WHERE updated_at > $1)::int as leads_hoje,
+        COUNT(*) FILTER (WHERE updated_at >= $1 AND updated_at <= $2)::int as leads_hoje,
         COUNT(*) FILTER (WHERE stage='qualificado')::int as qualificados,
         COUNT(*) FILTER (WHERE stage='agendado')::int as agendados,
         COUNT(*) FILTER (WHERE stage='convertido')::int as convertidos,
@@ -1509,8 +1521,8 @@ app.get('/api/dashboard', async (req, res) => {
         COUNT(*) FILTER (WHERE stage='atendimento')::int as em_atendimento,
         COUNT(*) FILTER (WHERE stage='aguardando')::int as aguardando,
         COUNT(*) FILTER (WHERE stage='novo')::int as novos
-      FROM crm_leads`, [dayAgo]),
-      // Sem resposta: AI enviou por último e cliente não respondeu (últimas 48h)
+      FROM crm_leads`, [from, to]),
+      // Sem resposta: sempre baseado nas últimas 48h (não filtra por período)
       pool.query(`SELECT COUNT(*)::int as count FROM conversations
         WHERE last_ai_at IS NOT NULL AND last_ai_at > $1
         AND (last_user_at IS NULL OR last_ai_at > last_user_at)`, [now - 172800000]),
