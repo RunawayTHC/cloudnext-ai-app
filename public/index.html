@@ -2498,12 +2498,12 @@ function loadCharacter(file) {
     scene.add(model);
     currentModel = model;
 
-    // Auto-fit camera: center on character, add padding
+    // Auto-fit camera: center on full character with padding
     const h = box.max.y - box.min.y;
-    const mid = h * 0.5;
-    const dist = h * 1.5; // enough to see full character with FOV=45
+    const mid = h * 0.52;
+    const dist = h * 2.4;
     camera.position.set(0, mid, dist);
-    camera.lookAt(0, mid, 0);
+    camera.lookAt(0, mid * 0.9, 0);
 
     // KEY FIX: use SkinnedMesh as mixer root
     // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
