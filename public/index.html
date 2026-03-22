@@ -2335,36 +2335,64 @@ function scoreToMood(score) {
   return 'frustrada';
 }
 
+// Índice de rotação global — avança a cada chamada no mesmo humor
+const _bubbleIdx = {};
 function buildBubbleMsg(mood, d) {
-  const sc = d.score !== null ? d.score + '%' : null;
+  const sc = d.score !== null ? d.score + '%' : '—';
+  const tot = d.total, q = d.qualificados, p = d.perdidos, u = d.urgentes;
   const msgs = {
     animada: [
-      `Hoje tô voando! ${d.qualificados} leads qualificados de ${d.total} — ${sc} de aproveitamento! 🚀`,
+      `Hoje tô voando! ${q} leads qualificados de ${tot} — ${sc} de aproveitamento! 🚀`,
       `Que dia incrível! ${sc} de conversão. Esse ritmo é imbatível! ✨`,
+      `${q} qualificados e contando! Se continuar assim a meta tá garantida 💪`,
+      `${sc} de aproveitamento — um dos melhores dias! Estou em modo turbo hoje!`,
+      `Adoro quando os leads chegam com intenção de fechar. ${q} qualificados provam isso!`,
+      `Meta no horizonte! ${sc} de conversão com ${tot} leads. Dia redondo! 🎯`,
     ],
     otimista: [
-      `Bom progresso! ${d.qualificados} qualificados de ${d.total} leads hoje, ${sc} de aproveitamento 😊`,
+      `Bom progresso! ${q} qualificados de ${tot} leads hoje — ${sc} de aproveitamento 😊`,
       `As coisas estão indo bem — ${sc} de conversão. Vamos manter o ritmo!`,
+      `${tot} leads no funil e ${q} encaminhados. Dia positivo por aqui!`,
+      `${sc} de conversão — acima da média. Boa energia hoje! 🙌`,
+      `${q} leads qualificados é um ótimo sinal. Seguindo com otimismo!`,
+      `Fluindo bem! ${p > 0 ? p + ' perdidos, mas ' : ''}${q} qualificados já valem o dia.`,
     ],
     neutra: [
-      `${d.total} leads hoje, ${d.qualificados} qualificados. ${sc ? sc + ' de aproveitamento.' : 'Acompanhando...'}`,
-      `Dia razoável por aqui. ${sc ? sc + ' de conversão — podemos melhorar!' : 'Aguardando mais leads.'}`,
+      `${tot} leads hoje, ${q} qualificados. ${sc} de aproveitamento — dentro do esperado.`,
+      `Dia razoável por aqui. ${sc} de conversão — podemos melhorar!`,
+      `${q} de ${tot} qualificados. Nada de animador, mas nada preocupante.`,
+      `${sc} de aproveitamento. Dá pra crescer — vou ficar de olho nos próximos atendimentos.`,
+      `Ritmo constante. ${q} qualificados, ${p} perdidos. Equilíbrio precário!`,
+      `Dia de trabalho firme. ${tot} leads tratados, ${sc} encaminhados. Seguindo!`,
     ],
     preocupada: [
-      `Hmm… só ${d.qualificados} qualificados de ${d.total} leads (${sc}). Preciso entender o que tá travando 😟`,
+      `Hmm… só ${q} qualificados de ${tot} leads (${sc}). Preciso entender o que tá travando 😟`,
       `${sc} de conversão — abaixo do esperado. Vou analisar os atendimentos...`,
+      `${p} perdidos já é sinal de alerta. Algo na abordagem pode estar falhando.`,
+      `${tot} leads e apenas ${q} qualificados. Será que os leads estão frios demais?`,
+      `${sc} de aproveitamento me preocupa. Vale revisar o script de qualificação.`,
+      `${u > 0 ? u + ' urgentes sem resolver e ' : ''}${sc} de conversão — preciso de atenção aqui!`,
     ],
     frustrada: [
-      `${sc} de aproveitamento com ${d.perdidos} perdidos! Algo tá errado hoje. Me chama pra conversar! 😤`,
-      `Apenas ${d.qualificados} qualificados de ${d.total} leads — ${sc}. Situação crítica, preciso de apoio!`,
+      `${sc} de aproveitamento com ${p} perdidos! Algo tá errado hoje. Me chama pra conversar! 😤`,
+      `Apenas ${q} qualificados de ${tot} leads — ${sc}. Situação crítica, preciso de apoio!`,
+      `${p} leads perdidos num dia só é demais. Isso não pode continuar assim 😠`,
+      `${sc} de conversão. Ou os leads estão péssimos ou a abordagem precisa de revisão urgente.`,
+      `Todo esforço e só ${q} qualificado(s)? Algo tá bloqueando o funil. Vamos falar!`,
+      `${u > 0 ? u + ' urgentes ignorados e ' : ''}${sc} de aproveitamento. Preciso de suporte agora!`,
     ],
     sem_dados: [
       `Ainda sem dados de hoje. Assim que chegarem os primeiros leads, atualizo você! 😊`,
       `Aguardando os primeiros atendimentos do dia...`,
+      `Dia começando! Pronta para acompanhar cada lead que chegar. 🎯`,
+      `Nenhum lead movimentado ainda hoje. Enquanto isso, estou aqui de prontidão!`,
     ],
   };
   const pool = msgs[mood] || msgs.neutra;
-  return pool[Math.floor(Math.random() * pool.length)];
+  // Rotação sequencial: avança índice a cada chamada por humor
+  if (_bubbleIdx[mood] === undefined) _bubbleIdx[mood] = Math.floor(Math.random() * pool.length);
+  else _bubbleIdx[mood] = (_bubbleIdx[mood] + 1) % pool.length;
+  return pool[_bubbleIdx[mood]];
 }
 
 async function loadLeadQuality() {
@@ -2624,6 +2652,8 @@ loadConfig();
 fetch('/api/relay/config').then(r=>r.json()).then(d=>updateRelayUI(d.relay)).catch(()=>{});
 poll();setInterval(poll,5000);
 loadDashboard();
+// Rotaciona a frase do balão a cada 2 minutos sem recarregar o dashboard inteiro
+setInterval(() => loadLeadQuality(), 2 * 60 * 1000);
 </script>
 
 <script type="module">
