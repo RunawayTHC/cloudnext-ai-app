@@ -332,8 +332,8 @@
 
     /* ── DASHBOARD ── */
     .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:16px 20px; color:white; display:flex; align-items:flex-end; gap:16px; margin-bottom:14px; overflow:hidden; position:relative; min-height:140px; }
-    .dash-avatar-3d { width:72px; height:110px; flex-shrink:0; position:relative; margin-bottom:-16px; }
-    .dash-avatar-3d canvas { width:72px!important; height:110px!important; display:block; }
+    .dash-avatar-3d { width:90px; height:140px; flex-shrink:0; position:relative; margin-bottom:-16px; }
+    .dash-avatar-3d canvas { width:90px!important; height:140px!important; display:block; }
     .dash-avatar-ring { display:none; }
     @keyframes pulse-ring { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.06)} }
     .dash-mood-badge { display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,.2); padding:3px 10px; border-radius:20px; font-size:12px; margin-top:4px; }
@@ -459,7 +459,7 @@
         <!-- Hero Mood Banner -->
         <div class="dash-hero" id="dash-hero">
           <div class="dash-avatar-3d" id="dash-avatar-3d">
-            <canvas id="avatar-canvas" width="72" height="110"></canvas>
+            <canvas id="avatar-canvas" width="90" height="140"></canvas>
           </div>
           <div class="dash-hero-text">
             <h3 id="dash-ai-name">Carregando...</h3>
@@ -2429,102 +2429,107 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const canvas = document.getElementById('avatar-canvas');
-if (!canvas) throw new Error('avatar-canvas not found');
+if (!canvas) throw new Error('no avatar-canvas');
 
+const W = 90, H = 140;
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(72, 110, false);
+renderer.setSize(W, H, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = false;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(40, 72 / 110, 0.1, 50);
-camera.position.set(0, 1.1, 3.2);
-camera.lookAt(0, 0.8, 0);
+const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 50);
 
-scene.add(new THREE.AmbientLight(0xffffff, 2.5));
-const sun = new THREE.DirectionalLight(0xfff8e7, 3);
-sun.position.set(1.5, 3, 2);
-scene.add(sun);
-const fill = new THREE.DirectionalLight(0xaaccff, 1);
-fill.position.set(-2, 1, -1);
-scene.add(fill);
+scene.add(new THREE.AmbientLight(0xffffff, 2.2));
+const sun = new THREE.DirectionalLight(0xfff4e0, 3.5);
+sun.position.set(2, 4, 3); scene.add(sun);
+const fill = new THREE.DirectionalLight(0xaaddff, 1);
+fill.position.set(-2, 2, -1); scene.add(fill);
 
 const loader = new GLTFLoader();
-let mixer = null, allClips = {}, currentAction = null, ready = false;
-let pendingMood = 'neutra';
+const allClips = {};
+let mixer = null, currentAction = null, ready = false, pendingMood = 'neutra';
+let currentModel = null, bobAngle = 0;
 
 const MOOD_ANIMS = {
-  animada:    { name: 'Jump_Full_Short', loop: false },
-  otimista:   { name: 'Idle_B',         loop: true  },
-  neutra:     { name: 'Idle_A',         loop: true  },
-  preocupada: { name: 'Use_Item',       loop: true  },
-  frustrada:  { name: 'Hit_A',          loop: false },
+  animada:    { name: 'Spawn_Ground', loop: false, then: 'Idle_B' },
+  otimista:   { name: 'Idle_B',      loop: true  },
+  neutra:     { name: 'Idle_A',      loop: true  },
+  preocupada: { name: 'Interact',    loop: true  },
+  frustrada:  { name: 'Hit_A',       loop: false, then: 'Idle_A' },
 };
 
-function playAnim(mood) {
-  const cfg = MOOD_ANIMS[mood] || MOOD_ANIMS.neutra;
-  const clip = allClips[cfg.name] || allClips['Idle_A'];
-  if (!clip || !mixer) return;
-  const next = mixer.clipAction(clip);
-  next.setLoop(cfg.loop ? THREE.LoopRepeat : THREE.LoopOnce, 1);
-  if (!cfg.loop) next.clampWhenFinished = true;
+function crossfade(toClip, loop, thenName) {
+  if (!toClip || !mixer) return;
+  const next = mixer.clipAction(toClip);
+  next.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce);
+  if (!loop) next.clampWhenFinished = true;
   if (currentAction && currentAction !== next) {
-    next.reset().setEffectiveWeight(1).fadeIn(0.5);
-    currentAction.fadeOut(0.5);
-  } else if (!currentAction) {
-    next.reset().play();
-  }
+    next.reset().setEffectiveWeight(1).fadeIn(0.4);
+    currentAction.fadeOut(0.4);
+  } else { next.reset().play(); }
   currentAction = next;
-  // After one-shot anim, fall back to Idle_A
-  if (!cfg.loop) {
-    mixer.addEventListener('finished', function onFin(e) {
-      if (e.action === next) {
-        mixer.removeEventListener('finished', onFin);
-        playAnim('neutra');
-      }
+  if (!loop && thenName) {
+    mixer.addEventListener('finished', function cb(e) {
+      if (e.action !== next) return;
+      mixer.removeEventListener('finished', cb);
+      crossfade(allClips[thenName] || allClips['Idle_A'], true, null);
     });
   }
 }
 
-let currentModel = null;
+function playMood(mood) {
+  const cfg = MOOD_ANIMS[mood] || MOOD_ANIMS.neutra;
+  crossfade(allClips[cfg.name] || allClips['Idle_A'], cfg.loop, cfg.then || null);
+}
+
 function loadCharacter(file) {
   if (currentModel) { scene.remove(currentModel); currentModel = null; }
   mixer = null; currentAction = null; ready = false;
+
   loader.load('/models/' + file, gltf => {
     const model = gltf.scene;
     const box = new THREE.Box3().setFromObject(model);
-    const center = box.getCenter(new THREE.Vector3());
-    model.position.sub(center);
-    model.position.y += (box.max.y - box.min.y) / 2;
+    model.position.set(
+      -(box.max.x + box.min.x) / 2,
+      -box.min.y,
+      -(box.max.z + box.min.z) / 2
+    );
     scene.add(model);
     currentModel = model;
-    mixer = new THREE.AnimationMixer(model);
-    if (Object.keys(allClips).length > 0) {
-      ready = true; playAnim(pendingMood);
-    }
-  }, undefined, err => console.warn('3D load error', err));
+
+    // Auto-fit camera
+    const h = box.max.y - box.min.y;
+    camera.position.set(0, h * 0.42, h * 1.9);
+    camera.lookAt(0, h * 0.32, 0);
+
+    // KEY FIX: use SkinnedMesh as mixer root
+    // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
+    let skinned = null;
+    model.traverse(n => { if (n.isSkinnedMesh && !skinned) skinned = n; });
+    mixer = new THREE.AnimationMixer(skinned || model);
+
+    if (Object.keys(allClips).length > 0) { ready = true; playMood(pendingMood); }
+  }, undefined, err => console.warn('3D:', err));
 }
 
-// Load animations once, then load default character
 loader.load('/models/Rig_Medium_General.glb', g1 => {
   g1.animations.forEach(c => { allClips[c.name] = c; });
   loader.load('/models/Rig_Medium_MovementBasic.glb', g2 => {
     g2.animations.forEach(c => { allClips[c.name] = c; });
     loadCharacter(window._aiCharacterFile || 'Mage.glb');
-    window.setCharacterMood = (mood) => { pendingMood = mood; if (ready) playAnim(mood); };
-    window.loadCharacter3D = (file) => loadCharacter(file);
   });
 });
 
-let angle = 0;
+window.setCharacterMood = (mood) => { pendingMood = mood; if (ready) playMood(mood); };
+window.loadCharacter3D  = (file) => { window._aiCharacterFile = file; loadCharacter(file); };
+
 const clock = new THREE.Clock();
-(function animate() {
-  requestAnimationFrame(animate);
+(function loop() {
+  requestAnimationFrame(loop);
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
-  angle += dt * 0.4;
-  scene.rotation.y = Math.sin(angle * 0.5) * 0.3; // gentle sway instead of full spin
+  if (currentModel) { bobAngle += dt * 0.6; currentModel.rotation.y = Math.sin(bobAngle * 0.5) * 0.18; }
   renderer.render(scene, camera);
 })();
 </script>
