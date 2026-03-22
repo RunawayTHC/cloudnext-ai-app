@@ -2649,12 +2649,11 @@ function loadCharacter(file) {
     const worldBox = new THREE.Box3().setFromObject(model);
     const h = worldBox.max.y - worldBox.min.y;
 
-    // Show full character (feet to hat) at ~60% of canvas height.
-    // dist = h / (2 * 0.60 * tan(halfFov)) ≈ h*2.0 fills 60% vertically.
-    // lookAt at waist (h*0.50), camera pulled up to h*0.55 so hat clears top.
+    // Character fills ~60% of canvas height; lookAt aimed at thighs (h*0.28)
+    // so the hat sits in the upper ~12% of frame instead of being cut.
     const dist = h * 2.0;
-    camera.position.set(0, h * 0.55, dist);
-    camera.lookAt(0, h * 0.50, 0);
+    camera.position.set(0, h * 0.30, dist);
+    camera.lookAt(0, h * 0.28, 0);
 
     // KEY FIX: use SkinnedMesh as mixer root
     // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
