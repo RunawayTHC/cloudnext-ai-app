@@ -1608,9 +1608,70 @@ POSTURA GERAL:
 - Quando os números estiverem ruins, não minimize: sinalize com clareza o que está errado e o que pode ser feito
 - Quando os números estiverem bons, reconheça e sugira como manter ou escalar
 - Respostas curtas e objetivas. Sem listas enormes. Fale como profissional, não como manual.
-- Pode usar tom levemente irônico quando o pedido for claramente contra-produtivo, mas sempre com respeito${metricsBlock}`;
-    const rawResponse = (await callGemini(message, coachPersona, geminiModel, history))
+- Pode usar tom levemente irônico quando o pedido for claramente contra-produtivo, mas sempre com respeito
+
+━━━ AÇÕES QUE VOCÊ PODE EXECUTAR ━━━
+
+Você tem poder de CONFIGURAR o sistema diretamente. Quando o operador pedir para adicionar, alterar ou configurar algo, FAÇA DE VERDADE incluindo um bloco de ação no final da sua resposta.
+
+Configuração atual de follow-up para não-respondidos:
+${JSON.stringify(state.config.noreplyFollowupSteps || [])}
+
+AÇÕES DISPONÍVEIS — Adicione ao final da sua resposta quando aplicável:
+
+Para adicionar tentativa de follow-up:
+##ACTION## {"type":"add_noreply_step","delayHours":NUMERO,"instruction":"INSTRUÇÃO PARA IA"}
+
+Para substituir todas as tentativas de follow-up:
+##ACTION## {"type":"set_noreply_steps","steps":[{"delayHours":NUMERO,"instruction":"INSTRUÇÃO"},{"delayHours":NUMERO,"instruction":"INSTRUÇÃO"}]}
+
+Para ativar/desativar follow-up:
+##ACTION## {"type":"set_config","key":"noreplyFollowupEnabled","value":true}
+
+Para configurar follow-up de agendamento:
+##ACTION## {"type":"set_config","key":"apptFollowupEnabled","value":true}
+##ACTION## {"type":"set_config","key":"apptFollowupOffsetMin","value":NUMERO}
+##ACTION## {"type":"set_config","key":"apptFollowupMsg","value":"MENSAGEM"}
+
+REGRAS DE AÇÃO:
+- Só inclua ##ACTION## quando o operador confirmar explicitamente que quer a mudança
+- Coloque o ##ACTION## no final, após a mensagem normal
+- Nunca diga "vou configurar" sem incluir o ##ACTION## correspondente
+- Se executar uma ação, confirme na mensagem o que foi feito de verdade${metricsBlock}`;
+    const fullResponse = (await callGemini(message, coachPersona, geminiModel, history))
       .replace(/\[(AUDIO|TEXTO)\]\s*/gi, '').trim();
+
+    // ── EXTRACT & EXECUTE ##ACTION## blocks ──
+    const actionRegex = /##ACTION##\s*(\{[^}]+\})/g;
+    const actionsExecuted = [];
+    let match;
+    while ((match = actionRegex.exec(fullResponse)) !== null) {
+      try {
+        const action = JSON.parse(match[1]);
+        if (action.type === 'add_noreply_step') {
+          const step = { delayHours: Number(action.delayHours) || 24, instruction: action.instruction || 'Seja gentil e tente reengajar.' };
+          state.config.noreplyFollowupSteps = [...(state.config.noreplyFollowupSteps || []), step];
+          state.config.noreplyFollowupEnabled = true;
+          await saveConfig();
+          actionsExecuted.push(`✅ Follow-up adicionado: após ${step.delayHours}h sem resposta`);
+        } else if (action.type === 'set_noreply_steps') {
+          state.config.noreplyFollowupSteps = (action.steps || []).map(s => ({ delayHours: Number(s.delayHours) || 24, instruction: s.instruction || '' }));
+          state.config.noreplyFollowupEnabled = true;
+          await saveConfig();
+          actionsExecuted.push(`✅ Follow-ups configurados: ${state.config.noreplyFollowupSteps.length} tentativa(s)`);
+        } else if (action.type === 'set_config') {
+          const safeKeys = ['noreplyFollowupEnabled','apptFollowupEnabled','apptFollowupOffsetMin','apptFollowupMsg','audioMaxSeconds','audioDailyLimit'];
+          if (safeKeys.includes(action.key)) {
+            state.config[action.key] = action.value;
+            await saveConfig();
+            actionsExecuted.push(`✅ Configuração atualizada: ${action.key} = ${action.value}`);
+          }
+        }
+      } catch (e) { /* invalid JSON, skip */ }
+    }
+    // Strip ##ACTION## blocks from the visible response
+    const rawResponse = fullResponse.replace(/\s*##ACTION##\s*\{[^}]+\}/g, '').trim();
+
     // Detecta se é instrução comportamental OU se o operador insistiu após discordância da IA
     const isInstruction = /presta.{0,10}aten|não dev|nunca |sempre que|lembra que|aprenda|corrij|evit|pode sim|faça assim|insist|mesmo assim|pode fazer|tudo bem fazer/i.test(message);
     // Detecta se a IA concordou na resposta (não salvamos instruções que a IA recusou sem insistência)
@@ -1626,10 +1687,9 @@ POSTURA GERAL:
 
     // Detecta se a IA está sugerindo salvar algo na memória (pergunta proativa ou conteúdo relevante)
     const suggestSave = !savedAsMemory && /devo (guardar|salvar|registrar|memorizar)|quer que eu (guarde|salve|registre|aprenda)|posso (guardar|salvar|registrar) isso/i.test(rawResponse);
-    // Gera resumo para salvar caso o usuário confirme
     const memorySummary = suggestSave ? message.slice(0, 300) : null;
 
-    res.json({ ok: true, response: rawResponse, savedAsMemory, suggestSave, memorySummary });
+    res.json({ ok: true, response: rawResponse, savedAsMemory, suggestSave, memorySummary, actionsExecuted });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

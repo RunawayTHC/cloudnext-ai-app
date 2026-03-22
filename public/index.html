@@ -2430,10 +2430,11 @@ async function sendAICoach() {
     }).then(r => r.json());
     _coachHistory.push({ role: 'user', text: msg });
     const reply = d.response || 'Erro ao responder.';
-    appendCoachMsg(reply, 'ai', { saved: d.savedAsMemory, suggest: d.suggestSave, summary: d.memorySummary });
+    appendCoachMsg(reply, 'ai', { saved: d.savedAsMemory, suggest: d.suggestSave, summary: d.memorySummary, actions: d.actionsExecuted });
     _coachHistory.push({ role: 'model', text: reply });
     if (_coachHistory.length > 20) _coachHistory = _coachHistory.slice(-20);
     if (d.savedAsMemory) setTimeout(() => loadDashboard(), 1000);
+    if (d.actionsExecuted?.length) setTimeout(() => loadConfig(), 800);
   } catch(e) { appendCoachMsg('Erro de conexão.', 'ai'); }
 }
 
@@ -2452,10 +2453,11 @@ async function confirmSaveMemory(btn, summary) {
 }
 
 function appendCoachMsg(text, role, meta = {}) {
-  // meta: { saved, suggest, summary } or false/undefined (legacy)
+  // meta: { saved, suggest, summary, actions } or false/undefined (legacy)
   const saved   = meta === true || meta?.saved;
   const suggest = meta?.suggest;
   const summary = meta?.summary;
+  const actions = meta?.actions || [];
   const el = document.getElementById('ai-coach-msgs');
   const div = document.createElement('div');
   div.className = `ai-coach-msg ${role}`;
@@ -2468,6 +2470,17 @@ function appendCoachMsg(text, role, meta = {}) {
     // update float btn badge count
     _coachMemorySavedCount = (_coachMemorySavedCount || 0) + 1;
     updateCoachMemoryBadge();
+  }
+  if (actions.length) {
+    const actDiv = document.createElement('div');
+    actDiv.style.cssText = 'margin-top:6px;display:flex;flex-direction:column;gap:3px;';
+    actions.forEach(a => {
+      const span = document.createElement('div');
+      span.style.cssText = 'font-size:11px;color:var(--wa-green);background:rgba(0,168,132,.08);border-radius:8px;padding:3px 8px;font-weight:600;';
+      span.textContent = a;
+      actDiv.appendChild(span);
+    });
+    div.appendChild(actDiv);
   }
   if (suggest && summary) {
     const prompt = document.createElement('div');
