@@ -2296,12 +2296,15 @@ function renderFunnel(stages) {
   const sorted = [...stages].sort((a,b) => ORDER.indexOf(a.stage) - ORDER.indexOf(b.stage));
   const max = Math.max(...stages.map(s => s.count), 1);
   el.innerHTML = sorted.map(s => {
-    const w = Math.max(8, Math.round((s.count / max) * 100));
+    const w = Math.max(4, Math.round((s.count / max) * 100));
     const color = STAGE_COLORS[s.stage] || '#8696a0';
+    const pct = s.count === 1 && max === 1 ? 100 : w;
     return `<div class="funnel-bar">
       <div class="funnel-label">${STAGE_NAMES[s.stage] || s.stage}</div>
-      <div class="funnel-fill" style="width:${w}%;background:${color};flex:1;"></div>
-      <div class="funnel-count">${s.count}</div>
+      <div style="flex:1;background:rgba(0,0,0,0.06);border-radius:4px;height:18px;overflow:hidden;">
+        <div class="funnel-fill" style="width:${pct}%;height:100%;background:${color};"></div>
+      </div>
+      <div class="funnel-count" style="width:28px;">${s.count}</div>
     </div>`;
   }).join('');
 }
@@ -2642,11 +2645,11 @@ function loadCharacter(file) {
     scene.add(model);
     currentModel = model;
 
-    // Auto-fit camera: show full character including hat
+    // Auto-fit camera: frame full character from head/hat down
     const h = box.max.y - box.min.y;
     const dist = h * 2.4;
-    camera.position.set(0, h * 0.42, dist);
-    camera.lookAt(0, h * 0.38, 0);
+    camera.position.set(0, h * 0.62, dist);
+    camera.lookAt(0, h * 0.52, 0);
 
     // KEY FIX: use SkinnedMesh as mixer root
     // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
