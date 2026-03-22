@@ -331,8 +331,8 @@
     .followup-badge { font-size:10px; background:rgba(139,92,246,.1); color:#8b5cf6; border-radius:10px; padding:2px 8px; font-weight:600; }
 
     /* ── DASHBOARD ── */
-    .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:16px 20px; color:white; display:flex; align-items:flex-end; gap:16px; margin-bottom:14px; overflow:hidden; position:relative; min-height:140px; }
-    .dash-avatar-3d { width:90px; height:140px; flex-shrink:0; position:relative; margin-bottom:-16px; }
+    .dash-hero { background:linear-gradient(135deg,#005c4b,#00a884); border-radius:12px; padding:16px 20px; color:white; display:flex; align-items:center; gap:16px; margin-bottom:14px; overflow:hidden; position:relative; min-height:140px; }
+    .dash-avatar-3d { width:90px; height:140px; flex-shrink:0; position:relative; }
     .dash-avatar-3d canvas { width:90px!important; height:140px!important; display:block; }
     .dash-avatar-ring { display:none; }
     @keyframes pulse-ring { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.06)} }
@@ -2498,12 +2498,11 @@ function loadCharacter(file) {
     scene.add(model);
     currentModel = model;
 
-    // Auto-fit camera: center on full character with padding
+    // Auto-fit camera: show full character including hat
     const h = box.max.y - box.min.y;
-    const mid = h * 0.52;
     const dist = h * 2.4;
-    camera.position.set(0, mid, dist);
-    camera.lookAt(0, mid * 0.9, 0);
+    camera.position.set(0, h * 0.42, dist);
+    camera.lookAt(0, h * 0.38, 0);
 
     // KEY FIX: use SkinnedMesh as mixer root
     // PropertyBinding finds bones via skeleton.getBoneByName() — reliable
