@@ -59,6 +59,7 @@ async function initDB() {
     );
     ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_ai_at BIGINT;
     ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_user_at BIGINT;
+    ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS collected_data JSONB DEFAULT '{}';
     CREATE TABLE IF NOT EXISTS human_paused (
       phone TEXT PRIMARY KEY,
       paused_at BIGINT NOT NULL
@@ -224,6 +225,8 @@ const state = {
     aiSegment: '',
     aiAvatarStyle: 'adventurer',
     aiCharacter: 'Mage.glb',
+    aiObjectiveFields: [],   // [{label:'E-mail',key:'email'}, ...]
+    aiObjectiveAfter: 'qualificar',  // 'qualificar'|'humanizar'|'agendar'|'encerrar'
   },
   stats: { totalSent: 0, textSent: 0, audioSent: 0, errors: 0, startTime: Date.now() },
   _qrBase64: null,
@@ -276,6 +279,8 @@ async function loadConfig() {
   if (map.aiSegment !== undefined)    state.config.aiSegment    = map.aiSegment;
   if (map.aiAvatarStyle !== undefined) state.config.aiAvatarStyle = map.aiAvatarStyle;
   if (map.aiCharacter   !== undefined) state.config.aiCharacter   = map.aiCharacter;
+  if (map.aiObjectiveFields) { try { state.config.aiObjectiveFields = JSON.parse(map.aiObjectiveFields); } catch {} }
+  if (map.aiObjectiveAfter)  state.config.aiObjectiveAfter = map.aiObjectiveAfter;
 }
 
 async function saveConfig() {
@@ -316,7 +321,9 @@ async function saveConfig() {
     ['aiAge',      cfg.aiAge      || ''],
     ['aiRole',     cfg.aiRole     || ''],
     ['aiSegment',    cfg.aiSegment    || ''],
-    ['aiAvatarStyle', cfg.aiAvatarStyle || 'adventurer'],
+    ['aiAvatarStyle',      cfg.aiAvatarStyle || 'adventurer'],
+    ['aiObjectiveFields',  JSON.stringify(cfg.aiObjectiveFields || [])],
+    ['aiObjectiveAfter',   cfg.aiObjectiveAfter || 'qualificar'],
   ];
   for (const [key, value] of entries) {
     await pool.query('INSERT INTO app_config (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2', [key, value]);
@@ -631,6 +638,39 @@ Se não houver insights relevantes, retorne {"insights":[]}.`;
   } catch (e) { console.log('[MEMORY ERR]', e.message); }
 }
 
+// Extracts collected objective fields from conversation and saves to crm_leads.collected_data
+async function analyzeObjectiveCompletion(phone, history, currentCollected, objFields) {
+  const uncollected = objFields.filter(f => !currentCollected[f.key]);
+  if (uncollected.length === 0 || !GEMINI_KEY) return;
+
+  const recent = history.slice(-10).map(m =>
+    `${m.role === 'user' ? 'Cliente' : 'IA'}: ${m.text}`
+  ).join('\n');
+
+  const fieldList = uncollected.map(f => `"${f.key}": "${f.label}"`).join(', ');
+  const extractPrompt = `Analise a conversa e extraia APENAS dados que o cliente forneceu explicitamente.\nCampos a extrair: {${fieldList}}\n\nConversa:\n${recent}\n\nResponda SOMENTE com JSON válido. Se o cliente não forneceu determinado dado, omita a chave. Nunca invente dados.\nExemplo: {"email":"joao@email.com"}`;
+
+  try {
+    const result = await callGemini(extractPrompt, 'Você é um extrator de dados. Responda APENAS com JSON válido, sem markdown, sem explicações.', 'gemini-2.0-flash', []);
+    const cleaned = result.replace(/```(?:json)?\n?|\n?```/g, '').trim();
+    const json = JSON.parse(cleaned);
+    const newData = { ...currentCollected };
+    let updated = false;
+    for (const f of uncollected) {
+      const val = json[f.key];
+      if (val && typeof val === 'string' && val.trim() && val !== 'null' && val.toLowerCase() !== 'não informado') {
+        newData[f.key] = val.trim();
+        updated = true;
+      }
+    }
+    if (updated) {
+      await pool.query('UPDATE crm_leads SET collected_data=$1, updated_at=$2 WHERE phone=$3',
+        [JSON.stringify(newData), Date.now(), phone]);
+      console.log(`[OBJETIVO] Dados coletados para ${phone}:`, Object.keys(newData).join(', '));
+    }
+  } catch(e) { /* silent — extraction failed, try next turn */ }
+}
+
 async function generateDailyReport() {
   if (!GEMINI_KEY) return;
   try {
@@ -922,7 +962,36 @@ async function processMessage(phone, messageText, sendTarget = null, rawPhone = 
     await new Promise(r => setTimeout(r, delay));
 
     const history = await getHistory(phone);
-    const rawResponse = await callGemini(messageText, persona, geminiModel, history);
+
+    // ── OBJETIVO DA CONVERSA ──
+    // Inject per-phone objective context into persona so the AI knows
+    // which fields to collect and doesn't re-ask what's already collected.
+    const objFields = state.config.aiObjectiveFields || [];
+    let collectedData = {};
+    let enhancedPersona = persona;
+    if (objFields.length > 0) {
+      const { rows: ldRows } = await pool.query('SELECT collected_data FROM crm_leads WHERE phone=$1', [phone]);
+      collectedData = ldRows[0]?.collected_data || {};
+      const uncollected = objFields.filter(f => !collectedData[f.key]);
+      const collected   = objFields.filter(f =>  collectedData[f.key]);
+      const afterMap = {
+        qualificar: 'O lead está qualificado. Fique disponível para dúvidas mas não solicite dados já fornecidos.',
+        humanizar:  'Informe gentilmente que um atendente humano dará continuidade. Agradeça e despeça-se.',
+        agendar:    'Proponha um agendamento para dar continuidade ao atendimento.',
+        encerrar:   'Encerre a conversa de forma gentil e profissional, agradecendo o contato.',
+      };
+      const after = afterMap[state.config.aiObjectiveAfter] || afterMap.qualificar;
+      if (uncollected.length === 0) {
+        enhancedPersona += `\n\n━━━ OBJETIVO CONCLUÍDO ━━━\nVocê já coletou todos os dados necessários: ${collected.map(f => `${f.label}="${collectedData[f.key]}"`).join(', ')}.\n${after}\nNÃO solicite novamente nenhuma dessas informações.`;
+      } else {
+        const collectedStr = collected.length > 0
+          ? `\nJá coletados (NÃO solicite novamente): ${collected.map(f => `${f.label}="${collectedData[f.key]}"`).join(', ')}.`
+          : '';
+        enhancedPersona += `\n\n━━━ OBJETIVO DA CONVERSA ━━━\nDurante a conversa colete naturalmente: ${uncollected.map(f => f.label).join(', ')}.${collectedStr}\nIMPORTANTE: Primeiro gere conexão genuína e entenda a necessidade do cliente. Só colete esses dados no momento certo — nunca logo no início da conversa.\nQuando todos os dados forem coletados: ${after}`;
+      }
+    }
+
+    const rawResponse = await callGemini(messageText, enhancedPersona, geminiModel, history);
     await addLog('ai', 'system', phone, `Gemini: ${rawResponse.slice(0, 120)}`);
 
     // Strip [AUDIO]/[TEXTO] tags from anywhere in the response
@@ -997,6 +1066,9 @@ async function processMessage(phone, messageText, sendTarget = null, rawPhone = 
     // Background CRM analysis (non-blocking)
     analyzeCRM(phone, [...history, { role: 'user', text: messageText }, { role: 'model', text: cleanResponse.replace(/^\*.+?\*:\s*\n\n/, '') }]).catch(() => {});
     analyzeMemory(phone, [...history, { role: 'user', text: messageText }, { role: 'model', text: cleanResponse.replace(/^\*.+?\*:\s*\n\n/, '') }]).catch(() => {});
+    if (objFields.length > 0) {
+      analyzeObjectiveCompletion(phone, [...history, { role: 'user', text: messageText }, { role: 'model', text: cleanResponse }], collectedData, objFields).catch(() => {});
+    }
   } catch (err) {
     await incStat('errors');
     await addLog('error', 'system', phone, err.message);

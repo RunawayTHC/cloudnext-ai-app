@@ -925,6 +925,24 @@
               </div>
             </div>
             <div class="card">
+              <div class="card-label">Objetivo da Conversa</div>
+              <p style="font-size:12px;color:var(--wa-muted);margin-bottom:14px;line-height:1.5;">Defina quais dados a IA deve coletar <strong>naturalmente</strong> durante a conversa. Ela primeiro gera conexão com o cliente — só coleta esses dados no momento certo, e nunca repete o que já foi fornecido.</p>
+              <div class="fg">
+                <label>Dados a coletar</label>
+                <div id="objective-fields-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+                <button class="btn btn-ghost" onclick="addObjectiveField()" style="width:100%;font-size:12px;">+ Adicionar campo</button>
+              </div>
+              <div class="fg" style="margin-top:14px;">
+                <label>Após coletar todos os dados</label>
+                <select id="cfg-objective-after" style="width:100%;padding:9px 12px;border:1.5px solid #e0e0e0;border-radius:8px;font-size:13px;background:white;">
+                  <option value="qualificar">Qualificar o lead (continua disponível para dúvidas)</option>
+                  <option value="humanizar">Passar para atendente humano</option>
+                  <option value="agendar">Propor agendamento</option>
+                  <option value="encerrar">Encerrar a conversa</option>
+                </select>
+              </div>
+            </div>
+            <div class="card">
               <div class="card-label">Follow-up para Não-Respondidos</div>
               <div class="toggle-row" style="margin-bottom:10px;">
                 <div class="toggle-info"><h4>Ativar follow-up automático</h4><p>Envia mensagem se cliente não responder após a IA</p><p style="margin-top:3px;font-size:11px;color:var(--wa-green);font-weight:600;">Apenas leads em "Em Atendimento" ou "Aguardando Retorno"</p></div>
@@ -1380,6 +1398,11 @@ async function loadConfig(){
   document.getElementById('appt-followup-fields').style.display = apptFuEnabled ? 'block' : 'none';
   if (_cfg.apptFollowupOffsetMin !== undefined) document.getElementById('cfg-appt-followup-offset').value = _cfg.apptFollowupOffsetMin;
   document.getElementById('cfg-appt-followup-msg').value = _cfg.apptFollowupMsg || '';
+  // Objective fields
+  _objFields = Array.isArray(_cfg.aiObjectiveFields) ? _cfg.aiObjectiveFields : [];
+  renderObjectiveFields();
+  const objAfterEl = document.getElementById('cfg-objective-after');
+  if (objAfterEl) objAfterEl.value = _cfg.aiObjectiveAfter || 'qualificar';
   // Identity fields
   if (_cfg.aiName !== undefined) {
     document.getElementById('cfg-ai-name').value = _cfg.aiName || '';
@@ -1443,8 +1466,10 @@ async function saveConfig(){
     aiAge:      document.getElementById('cfg-ai-age')?.value || '',
     aiRole:     document.getElementById('cfg-ai-role')?.value || '',
     aiSegment:  document.getElementById('cfg-ai-segment')?.value || '',
-    aiAvatarStyle: document.getElementById('cfg-avatar-style')?.value || 'adventurer',
-    aiCharacter:   document.getElementById('cfg-ai-character')?.value || 'Mage.glb',
+    aiAvatarStyle:     document.getElementById('cfg-avatar-style')?.value || 'adventurer',
+    aiCharacter:       document.getElementById('cfg-ai-character')?.value || 'Mage.glb',
+    aiObjectiveFields: _objFields.filter(f => f.label.trim()),
+    aiObjectiveAfter:  document.getElementById('cfg-objective-after')?.value || 'qualificar',
   };
   const d=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   toast(d.ok?'✅ Salvo!':'❌ Erro ao salvar',!d.ok);
@@ -1458,6 +1483,31 @@ function toggleScheduleFields(){
 }
 
 // ── Noreply follow-up steps ──
+// ── OBJECTIVE FIELDS ──
+let _objFields = [];
+function renderObjectiveFields() {
+  const list = document.getElementById('objective-fields-list');
+  if (!list) return;
+  if (!_objFields.length) {
+    list.innerHTML = '<p style="font-size:12px;color:var(--wa-muted);text-align:center;padding:8px 0;">Nenhum campo definido. Clique em "+ Adicionar campo".</p>';
+    return;
+  }
+  list.innerHTML = _objFields.map((f, i) => `
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input type="text" value="${f.label || ''}" placeholder="ex: E-mail, Endereço, CPF, WhatsApp..."
+             oninput="_objFields[${i}].label=this.value;_objFields[${i}].key=this.value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'')"
+             style="flex:1;padding:7px 10px;background:#f0f2f5;border:1.5px solid transparent;border-radius:8px;font-size:13px;outline:none;">
+      <button onclick="_objFields.splice(${i},1);renderObjectiveFields()" style="padding:6px 10px;border:none;background:#fee2e2;color:#ef4444;border-radius:6px;cursor:pointer;font-size:13px;">✕</button>
+    </div>`).join('');
+}
+function addObjectiveField() {
+  _objFields.push({ label: '', key: '' });
+  renderObjectiveFields();
+  // Focus the new input
+  const inputs = document.querySelectorAll('#objective-fields-list input');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
 let _noreplySteps = [];
 function toggleNoreplyFields() {
   document.getElementById('noreply-fields').style.display = document.getElementById('cfg-noreply-enabled').checked ? 'block' : 'none';
