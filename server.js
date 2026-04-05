@@ -621,8 +621,12 @@ Se não houver insights relevantes, retorne {"insights":[]}.`;
         [uuidv4(), ins.category, ins.content.slice(0, 300), ins.confidence || 'medium', now]
       );
     }
-    // Prune to max 500 entries keeping highest source_count
-    await pool.query(`DELETE FROM ai_memory WHERE id IN (SELECT id FROM ai_memory ORDER BY source_count ASC, updated_at ASC OFFSET 500)`);
+    // Smart prune strategy:
+    // 1. Delete weak memories (source_count=1) older than 30 days — never reinforced, likely noise
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    await pool.query(`DELETE FROM ai_memory WHERE source_count = 1 AND created_at < $1`, [thirtyDaysAgo]);
+    // 2. Hard cap at 2000 total — removes lowest source_count + oldest first
+    await pool.query(`DELETE FROM ai_memory WHERE id IN (SELECT id FROM ai_memory ORDER BY source_count ASC, updated_at ASC OFFSET 2000)`);
     console.log(`[MEMORY] ${json.insights.length} insight(s) adicionados`);
   } catch (e) { console.log('[MEMORY ERR]', e.message); }
 }
