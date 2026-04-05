@@ -621,8 +621,8 @@ Se não houver insights relevantes, retorne {"insights":[]}.`;
         [uuidv4(), ins.category, ins.content.slice(0, 300), ins.confidence || 'medium', now]
       );
     }
-    // Prune to max 200 entries keeping highest source_count
-    await pool.query(`DELETE FROM ai_memory WHERE id IN (SELECT id FROM ai_memory ORDER BY source_count ASC, updated_at ASC OFFSET 200)`);
+    // Prune to max 500 entries keeping highest source_count
+    await pool.query(`DELETE FROM ai_memory WHERE id IN (SELECT id FROM ai_memory ORDER BY source_count ASC, updated_at ASC OFFSET 500)`);
     console.log(`[MEMORY] ${json.insights.length} insight(s) adicionados`);
   } catch (e) { console.log('[MEMORY ERR]', e.message); }
 }
@@ -636,7 +636,7 @@ async function generateDailyReport() {
     const { rows: leads } = await pool.query('SELECT stage, sentiment FROM crm_leads WHERE updated_at > $1', [dayAgo]);
     const { rows: totalRow } = await pool.query('SELECT COUNT(*) as count FROM crm_leads');
     const { rows: msgCount } = await pool.query('SELECT COUNT(*) as count FROM conversations WHERE last_user_at > $1', [dayAgo]);
-    const { rows: memory } = await pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 15');
+    const { rows: memory } = await pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 80');
     const stageCount = {}, sentimentCount = {};
     leads.forEach(l => {
       stageCount[l.stage] = (stageCount[l.stage] || 0) + 1;
@@ -824,7 +824,7 @@ async function callGemini(userMessage, persona, model = 'gemini-2.0-flash', hist
   let memoryCtx = '';
   try {
     const { rows: mem } = await pool.query(
-      'SELECT category, content FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 25'
+      'SELECT category, content FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 80'
     );
     if (mem.length) {
       const grouped = {};
@@ -1506,7 +1506,7 @@ app.get('/api/dashboard', async (req, res) => {
       pool.query('SELECT COUNT(*)::int as count FROM crm_leads'),
       pool.query(`SELECT EXTRACT(HOUR FROM to_timestamp(ts/1000) AT TIME ZONE 'America/Sao_Paulo')::int as hour, COUNT(*)::int as count
         FROM app_logs WHERE type='message' AND direction='in' AND ts > $1 GROUP BY hour ORDER BY hour`, [weekAgo]),
-      pool.query('SELECT id, category, content, source_count FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 12'),
+      pool.query('SELECT id, category, content, source_count FROM ai_memory ORDER BY source_count DESC, updated_at DESC LIMIT 100'),
       pool.query('SELECT * FROM ai_reports ORDER BY created_at DESC LIMIT 1'),
       pool.query('SELECT stage, COUNT(*)::int as count FROM crm_leads GROUP BY stage'),
       // Mensagens = contatos únicos que enviaram no período selecionado
@@ -1561,7 +1561,7 @@ app.post('/api/ai/coach', async (req, res) => {
     const today = getBrazilDate();
     // Fetch REAL metrics to prevent hallucination
     const [memRows, metricsRow, msgRow, semRespostaRow] = await Promise.all([
-      pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 20'),
+      pool.query('SELECT category, content FROM ai_memory ORDER BY source_count DESC LIMIT 80'),
       pool.query(`SELECT
         COUNT(*) FILTER (WHERE updated_at > $1)::int as leads_hoje,
         COUNT(*) FILTER (WHERE stage='qualificado')::int as qualificados,
